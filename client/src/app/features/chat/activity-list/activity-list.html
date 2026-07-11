@@ -1,0 +1,10 @@
+<div class="activity-list">
+  @for (activity of activities(); track activity.label) {
+    <div class="activity-row">
+      <span class="activity-icon" [class.spinning]="activity.state === 'working'">
+        @if (activity.state === 'done') { ✓ } @else if (activity.state === 'working') { ◌ } @else { ◷ }
+      </span>
+      <span>{{ activity.label }}</span><small>{{ activity.detail }}</small>
+    </div>
+  }
+</div>

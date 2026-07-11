@@ -1,0 +1,507 @@
+import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AgentService } from './agent.service';
+import { TasksRepository } from '../tasks/tasks.repository';
+import { TaskEventsService } from '../tasks/task-events.service';
+import { OllamaService } from '../ollama/ollama.service';
+import { McpClientService } from '../mcp/mcp-client.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { AssistantTask } from '../tasks/task.types';
+
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+describe('AgentService', () => {
+  const createAgent = (maxSteps?: number) => {
+    const task: AssistantTask = {
+      id: 'task-1',
+      title: 'Test',
+      workspacePath: 'D:\\my-work',
+      status: 'idle',
+      messages: [],
+      createdAt: 'now',
+      updatedAt: 'now',
+    };
+    const tasks = {
+      addMessage: jest.fn(),
+      setStatus: jest.fn(),
+      findOne: jest.fn().mockReturnValue(task),
+    } as unknown as TasksRepository;
+    const events = { emit: jest.fn() } as unknown as TaskEventsService;
+    const ollama = { chat: jest.fn() } as unknown as OllamaService;
+    const mcp = { scanDirectory: jest.fn() } as unknown as McpClientService;
+    const permissions = {
+      create: jest.fn(),
+      findOne: jest.fn(),
+      resolve: jest.fn(),
+    } as unknown as PermissionsService;
+    const config = { get: () => maxSteps } as unknown as ConfigService;
+
+    const agent = new AgentService(
+      tasks,
+      events,
+      ollama,
+      mcp,
+      permissions,
+      config,
+    );
+    return { agent, tasks, events, ollama, mcp, permissions, task };
+  };
+
+  it('completes a task when the model responds without a tool call', async () => {
+    const { agent, tasks, events, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'Done',
+      toolCalls: [],
+    });
+
+    agent.start(task.id, 'hello');
+
+    expect(tasks.addMessage).toHaveBeenCalledWith(task.id, 'user', 'hello');
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'working');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'status', {
+      status: 'working',
+      text: expect.any(String),
+    });
+
+    await flush();
+
+    expect(tasks.addMessage).toHaveBeenCalledWith(task.id, 'assistant', 'Done');
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
+      status: 'completed',
+      stepsUsed: 2,
+    });
+  });
+
+  it('reports stepsUsed capped by a configured AGENT_MAX_STEPS below 2', async () => {
+    const { agent, events, ollama, task } = createAgent(1);
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'Done',
+      toolCalls: [],
+    });
+
+    agent.start(task.id, 'hi');
+    await flush();
+
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
+      status: 'completed',
+      stepsUsed: 1,
+    });
+  });
+
+  it('filters out tool-role messages when building context for Ollama', async () => {
+    const { agent, ollama, task } = createAgent();
+    task.messages = [
+      { id: '1', role: 'user', content: 'hi', createdAt: 'now' },
+      {
+        id: '2',
+        role: 'tool',
+        content: 'raw tool output',
+        toolName: 'scan_directory',
+        createdAt: 'now',
+      },
+    ];
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'ok',
+      toolCalls: [],
+    });
+
+    agent.start(task.id, 'follow up');
+    await flush();
+
+    const chatMock = ollama.chat as jest.Mock<
+      Promise<{ content: string; toolCalls: unknown[] }>,
+      [Array<{ role: string; content: string }>]
+    >;
+    const sentMessages = chatMock.mock.calls[0][0];
+    expect(sentMessages.some((m) => m.role === 'tool')).toBe(false);
+    expect(sentMessages.some((m) => m.content === 'hi')).toBe(true);
+  });
+
+  it('executes the scan directly when the requested path is inside the workspace', async () => {
+    const { agent, tasks, events, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\src' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'Found files', toolCalls: [] });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({ files: ['a.ts'] });
+
+    agent.start(task.id, 'scan src');
+    await flush();
+
+    expect(mcp.scanDirectory).toHaveBeenCalledWith('D:\\my-work\\src');
+    expect(events.emit).toHaveBeenCalledWith(
+      task.id,
+      'tool_started',
+      expect.any(Object),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      task.id,
+      'tool_completed',
+      expect.any(Object),
+    );
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'tool',
+      JSON.stringify({ files: ['a.ts'] }),
+      'scan_directory',
+    );
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'Found files',
+    );
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+  });
+
+  it('defaults the scan path to the workspace root when the model omits it', async () => {
+    const { agent, mcp, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ function: { name: 'scan_directory', arguments: {} } }],
+      })
+      .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({});
+
+    agent.start(task.id, 'scan');
+    await flush();
+
+    expect(mcp.scanDirectory).toHaveBeenCalledWith(task.workspacePath);
+  });
+
+  it('falls back to a default completion message when the follow-up has no content', async () => {
+    const { agent, tasks, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: task.workspacePath },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: '', toolCalls: [] });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({});
+
+    agent.start(task.id, 'scan');
+    await flush();
+
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'สแกนไฟล์เสร็จแล้ว',
+    );
+  });
+
+  it('supports POSIX-style workspace paths', async () => {
+    const { agent, mcp, ollama, task } = createAgent();
+    task.workspacePath = '/home/user/project';
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: '/home/user/project/src' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({});
+
+    agent.start(task.id, 'scan');
+    await flush();
+
+    expect(mcp.scanDirectory).toHaveBeenCalledWith('/home/user/project/src');
+  });
+
+  it('requests permission when the path is on a different drive than the workspace', async () => {
+    const { agent, tasks, events, ollama, permissions, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'C:\\Windows' },
+          },
+        },
+      ],
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+
+    agent.start(task.id, 'scan outside');
+    await flush();
+
+    expect(permissions.create).toHaveBeenCalledWith(task.id, 'C:\\Windows');
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'waiting_permission');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'permission_required', {
+      permission: expect.objectContaining({ id: 'perm-1' }),
+    });
+  });
+
+  it('treats a parent directory on the same drive as outside the workspace', async () => {
+    const { agent, tasks, ollama, permissions, task } = createAgent();
+    task.workspacePath = 'D:\\my-work\\sub';
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'D:\\my-work' },
+          },
+        },
+      ],
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-2',
+      taskId: task.id,
+      path: 'D:\\my-work',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+
+    agent.start(task.id, 'go up');
+    await flush();
+
+    expect(permissions.create).toHaveBeenCalledWith(task.id, 'D:\\my-work');
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'waiting_permission');
+  });
+
+  it('rejects resolving a permission that does not belong to the given task', () => {
+    const { agent, permissions } = createAgent();
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: 'other-task',
+    });
+
+    expect(() => agent.resolvePermission('task-1', 'perm-1', true)).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('resumes the scan after permission is allowed', async () => {
+    const { agent, tasks, ollama, mcp, permissions, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'C:\\Windows' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'Summarized', toolCalls: [] });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+    });
+    (permissions.resolve as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+      status: 'allowed',
+    });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({ files: [] });
+
+    agent.start(task.id, 'scan outside');
+    await flush();
+
+    agent.resolvePermission(task.id, 'perm-1', true);
+    await flush();
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'working');
+    expect(mcp.scanDirectory).toHaveBeenCalledWith('C:\\Windows');
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+  });
+
+  it('stops the task when permission is denied', async () => {
+    const { agent, tasks, events, ollama, permissions, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'C:\\Windows' },
+          },
+        },
+      ],
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+    });
+    (permissions.resolve as jest.Mock).mockReturnValue({
+      id: 'perm-1',
+      taskId: task.id,
+      status: 'denied',
+    });
+
+    agent.start(task.id, 'scan outside');
+    await flush();
+
+    agent.resolvePermission(task.id, 'perm-1', false);
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'stopped');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'status', {
+      status: 'stopped',
+      text: expect.any(String),
+    });
+  });
+
+  it('does nothing further when the permission has no matching pending run', () => {
+    const { agent, tasks, permissions, task } = createAgent();
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-unknown',
+      taskId: task.id,
+    });
+    (permissions.resolve as jest.Mock).mockReturnValue({
+      id: 'perm-unknown',
+      taskId: task.id,
+      status: 'allowed',
+    });
+
+    expect(() =>
+      agent.resolvePermission(task.id, 'perm-unknown', true),
+    ).not.toThrow();
+    expect(tasks.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not run the scan if the task was stopped while waiting for permission', async () => {
+    const { agent, mcp, ollama, permissions, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'C:\\Windows' },
+          },
+        },
+      ],
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-3',
+      taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-3',
+      taskId: task.id,
+    });
+    (permissions.resolve as jest.Mock).mockReturnValue({
+      id: 'perm-3',
+      taskId: task.id,
+      status: 'allowed',
+    });
+
+    agent.start(task.id, 'scan outside');
+    await flush();
+
+    task.status = 'stopped';
+    agent.resolvePermission(task.id, 'perm-3', true);
+    await flush();
+
+    expect(mcp.scanDirectory).not.toHaveBeenCalled();
+  });
+
+  it('stops a task directly', () => {
+    const { agent, tasks, events, task } = createAgent();
+
+    agent.stop(task.id);
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'stopped');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'status', {
+      status: 'stopped',
+      text: expect.any(String),
+    });
+  });
+
+  it('marks the task failed when the model call throws an Error', async () => {
+    const { agent, tasks, events, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock).mockRejectedValue(new Error('model down'));
+
+    agent.start(task.id, 'hello');
+    await flush();
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
+      message: 'model down',
+    });
+  });
+
+  it('stringifies a non-Error thrown value when marking the task failed', async () => {
+    const { agent, tasks, events, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: task.workspacePath },
+          },
+        },
+      ],
+    });
+    (mcp.scanDirectory as jest.Mock).mockRejectedValue('boom-string');
+
+    agent.start(task.id, 'scan');
+    await flush();
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
+      message: 'boom-string',
+    });
+  });
+});

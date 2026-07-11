@@ -1,0 +1,12 @@
+@if (store.pendingPermission(); as permission) {
+  <div class="permission-card">
+    <div class="permission-copy">
+      <span class="folder-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg></span>
+      <div><strong>ต้องการเข้าถึงข้อมูล (อ่านอย่างเดียว)</strong><p>{{ permission.path }}</p><small>เพื่ออ่านไฟล์และทำงานตามคำขอ</small></div>
+    </div>
+    <div class="permission-actions">
+      <button class="primary-button" type="button" (click)="store.resolvePermission(true)">อนุญาต</button>
+      <button class="secondary-button" type="button" (click)="store.resolvePermission(false)">ปฏิเสธ</button>
+    </div>
+  </div>
+}

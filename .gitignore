@@ -1,0 +1,20 @@
+# dependencies (each subpackage keeps its own isolated node_modules)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDEs and editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+
+# environment files
+.env
+.env.*
+!.env.example

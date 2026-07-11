@@ -1,0 +1,20 @@
+{
+  "name": "assistant-app",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8"
+  },
+  "lint-staged": {
+    "service/**/*.ts": [
+      "pnpm --dir service exec eslint --fix",
+      "pnpm --dir service exec prettier --write"
+    ],
+    "service/**/*.{js,mjs,cjs,json,md,yml,yaml}": "pnpm --dir service exec prettier --write"
+  }
+}

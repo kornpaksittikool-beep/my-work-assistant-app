@@ -1,0 +1,10 @@
+<aside class="workspace-panel">
+  <header>
+    <div><strong>Workspace</strong><small>{{ store.activeTask()?.workspacePath || 'ยังไม่เลือก workspace' }}</small></div>
+    <button class="icon-button" type="button" (click)="store.toggleWorkspacePanel()" aria-label="ปิด">×</button>
+  </header>
+  <div class="file-tree-placeholder">
+    <p>ยังไม่เชื่อมการดูไฟล์จริง — จะแสดงผลลัพธ์จาก <code>scan_directory</code> (1-scan-file) เมื่อ agent เรียกใช้งานในบทสนทนา</p>
+  </div>
+  <div class="panel-note"><span></span><div><strong>Workspace ปัจจุบัน</strong><small>{{ store.activeTask()?.workspacePath }}</small></div></div>
+</aside>

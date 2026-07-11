@@ -1,0 +1,6 @@
+<div class="app-shell" [class.sidebar-collapsed]="store.sidebarCollapsed()">
+  <app-sidebar />
+  <app-chat-workspace />
+  @if (store.workspacePanelOpen()) { <app-workspace-panel /> }
+  @if (store.error(); as error) { <div class="error-toast"><span>!</span>{{ error }}<button type="button" (click)="store.error.set(null)">×</button></div> }
+</div>

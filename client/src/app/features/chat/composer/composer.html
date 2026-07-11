@@ -1,0 +1,17 @@
+<footer class="composer-area">
+  <div class="working-bar">
+    <span><i></i>{{ store.isWorking() ? 'กำลังทำงาน...' : 'พร้อมรับคำสั่ง' }}</span>
+    @if (store.isWorking()) { <button type="button" (click)="store.stopWorking()">■ หยุด</button> }
+  </div>
+  <div class="composer">
+    <textarea [(ngModel)]="draft" (keydown)="onKeydown($event)" placeholder="พิมพ์คำสั่งหรือคำถาม..."></textarea>
+    <div class="composer-toolbar">
+      <div>
+        <button class="workspace-chip" type="button" (click)="store.toggleWorkspacePanel()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg>Workspace: {{ store.activeTask()?.workspacePath || 'ยังไม่เลือก' }}⌄
+        </button>
+      </div>
+      <button class="send-button" type="button" (click)="send()" [disabled]="!draft.trim()"><span>➤</span> ส่ง <kbd>Enter</kbd></button>
+    </div>
+  </div>
+</footer>

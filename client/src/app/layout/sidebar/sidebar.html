@@ -1,0 +1,33 @@
+<aside class="sidebar">
+  <div class="brand-row">
+    <div class="brand">
+      <span class="brand-mark">L</span>
+      @if (!store.sidebarCollapsed()) { <span>Local Assistant</span> }
+    </div>
+    <button class="icon-button" type="button" (click)="store.toggleSidebar()" aria-label="ย่อแถบด้านข้าง">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+  </div>
+
+  <button class="new-task-button" type="button" (click)="store.newTask()">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    @if (!store.sidebarCollapsed()) { <span>งานใหม่</span> }
+  </button>
+
+  @if (!store.sidebarCollapsed()) {
+    <nav class="task-nav" aria-label="รายการงาน">
+      <p class="nav-label">งานของฉัน</p>
+      @for (task of store.tasks(); track task.id) {
+        <button class="task-item" type="button" [class.active]="store.activeTaskId() === task.id" (click)="store.selectTask(task.id)">
+          <span class="task-state" [class.working]="task.status === 'working'"></span>
+          <span class="task-copy"><strong>{{ task.title }}</strong><small>{{ store.statusLabel(task.status) }}</small></span>
+          <time>{{ task.updatedAt.slice(11, 16) }}</time>
+        </button>
+      }
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="local-status"><span></span> Ollama ทำงานในเครื่อง</div>
+    </div>
+  }
+</aside>

@@ -1,0 +1,12 @@
+<header class="workspace-header">
+  <div class="task-heading">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4"/></svg>
+    <div>
+      <div class="title-line"><h1>{{ store.activeTaskTitle() }}</h1></div>
+      <div class="context-row">
+        <button type="button" (click)="store.toggleWorkspacePanel()">Workspace: <strong>{{ store.activeTask()?.workspacePath || 'ยังไม่เลือก' }}</strong></button>
+        @if (store.pendingPermission(); as permission) { <span>ขอสิทธิ์: <strong>{{ permission.path }}</strong></span> }
+      </div>
+    </div>
+  </div>
+</header>
