@@ -20,6 +20,13 @@ export interface AssistantTask {
   updatedAt: string;
 }
 
+export interface HealthStatus {
+  status: 'ok';
+  service: string;
+  ollama: { available: boolean; model: string };
+  timestamp: string;
+}
+
 export interface ActivityItem {
   id: string;
   label: string;
@@ -40,7 +47,7 @@ export interface PermissionRequest {
 export interface AgentEvent<T = Record<string, unknown>> {
   id: string;
   taskId: string;
-  type: 'status' | 'message' | 'tool_started' | 'tool_completed' | 'permission_required' | 'completed' | 'error';
+  type: 'status' | 'message' | 'message_delta' | 'tool_started' | 'tool_completed' | 'permission_required' | 'completed' | 'error';
   createdAt: string;
   payload: T;
 }

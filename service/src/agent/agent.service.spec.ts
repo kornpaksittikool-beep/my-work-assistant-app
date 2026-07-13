@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AgentService } from './agent.service';
+import { AgentService, SEARCH_EVERYWHERE_LABEL } from './agent.service';
 import { TasksRepository } from '../tasks/tasks.repository';
 import { TaskEventsService } from '../tasks/task-events.service';
 import { OllamaService } from '../ollama/ollama.service';
@@ -28,7 +28,10 @@ describe('AgentService', () => {
     } as unknown as TasksRepository;
     const events = { emit: jest.fn() } as unknown as TaskEventsService;
     const ollama = { chat: jest.fn() } as unknown as OllamaService;
-    const mcp = { scanDirectory: jest.fn() } as unknown as McpClientService;
+    const mcp = {
+      scanDirectory: jest.fn(),
+      searchFiles: jest.fn(),
+    } as unknown as McpClientService;
     const permissions = {
       create: jest.fn(),
       findOne: jest.fn(),
@@ -69,11 +72,11 @@ describe('AgentService', () => {
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
     expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
       status: 'completed',
-      stepsUsed: 2,
+      stepsUsed: 1,
     });
   });
 
-  it('reports stepsUsed capped by a configured AGENT_MAX_STEPS below 2', async () => {
+  it('reports stepsUsed of 1 when a configured AGENT_MAX_STEPS of 1 stops it immediately', async () => {
     const { agent, events, ollama, task } = createAgent(1);
     (ollama.chat as jest.Mock).mockResolvedValue({
       content: 'Done',
@@ -161,6 +164,121 @@ describe('AgentService', () => {
       'Found files',
     );
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
+      status: 'completed',
+      stepsUsed: 2,
+    });
+  });
+
+  it('keeps looping across multiple sequential tool calls until the model stops asking for one', async () => {
+    const { agent, mcp, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\a' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\a\\b' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'Found it', toolCalls: [] });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({});
+
+    agent.start(task.id, 'find the file');
+    await flush();
+    await flush();
+
+    expect(mcp.scanDirectory).toHaveBeenNthCalledWith(1, 'D:\\my-work\\a');
+    expect(mcp.scanDirectory).toHaveBeenNthCalledWith(2, 'D:\\my-work\\a\\b');
+    expect(ollama.chat).toHaveBeenCalledTimes(3);
+  });
+
+  it('halts the loop if the task is stopped between tool round-trips', async () => {
+    const { agent, mcp, ollama, task } = createAgent();
+    let resolveScan!: (value: unknown) => void;
+    (ollama.chat as jest.Mock).mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'D:\\my-work\\a' },
+          },
+        },
+      ],
+    });
+    (mcp.scanDirectory as jest.Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        }),
+    );
+
+    agent.start(task.id, 'find file');
+    await flush();
+
+    expect(ollama.chat).toHaveBeenCalledTimes(1);
+
+    task.status = 'stopped';
+    resolveScan({});
+    await flush();
+
+    expect(ollama.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops requesting further tool calls once AGENT_MAX_STEPS is reached, without executing the last one', async () => {
+    const { agent, tasks, mcp, ollama, task } = createAgent(2);
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\a' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\a\\b' },
+            },
+          },
+        ],
+      });
+    (mcp.scanDirectory as jest.Mock).mockResolvedValue({});
+
+    agent.start(task.id, 'find the file');
+    await flush();
+    await flush();
+
+    expect(mcp.scanDirectory).toHaveBeenCalledTimes(1);
+    expect(ollama.chat).toHaveBeenCalledTimes(2);
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'ถึงจำนวนขั้นตอนสูงสุดที่กำหนดไว้แล้ว ไม่สามารถดำเนินการต่อได้',
+    );
   });
 
   it('defaults the scan path to the workspace root when the model omits it', async () => {
@@ -202,7 +320,7 @@ describe('AgentService', () => {
     expect(tasks.addMessage).toHaveBeenCalledWith(
       task.id,
       'assistant',
-      'สแกนไฟล์เสร็จแล้ว',
+      'ดำเนินการเสร็จแล้ว',
     );
   });
 
@@ -481,6 +599,75 @@ describe('AgentService', () => {
     });
   });
 
+  it('emits message_delta events as the model streams content', async () => {
+    const { agent, events, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock).mockImplementation(
+      (_messages: unknown, onDelta?: (delta: string) => void) => {
+        onDelta?.('Hel');
+        onDelta?.('lo');
+        return Promise.resolve({ content: 'Hello', toolCalls: [] });
+      },
+    );
+
+    agent.start(task.id, 'hi');
+    await flush();
+
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'message_delta', {
+      delta: 'Hel',
+    });
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'message_delta', {
+      delta: 'lo',
+    });
+  });
+
+  it('marks the task failed when the tool call throws after permission is resumed', async () => {
+    const { agent, tasks, events, ollama, mcp, permissions, task } =
+      createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        {
+          function: {
+            name: 'scan_directory',
+            arguments: { path: 'C:\\Windows' },
+          },
+        },
+      ],
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'perm-5',
+      taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
+      status: 'pending',
+      createdAt: 'now',
+    });
+    (permissions.findOne as jest.Mock).mockReturnValue({
+      id: 'perm-5',
+      taskId: task.id,
+    });
+    (permissions.resolve as jest.Mock).mockReturnValue({
+      id: 'perm-5',
+      taskId: task.id,
+      status: 'allowed',
+    });
+    (mcp.scanDirectory as jest.Mock).mockRejectedValue(
+      new Error('disk unreadable'),
+    );
+
+    agent.start(task.id, 'scan outside');
+    await flush();
+
+    agent.resolvePermission(task.id, 'perm-5', true);
+    await flush();
+
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
+      message: 'disk unreadable',
+    });
+  });
+
   it('stringifies a non-Error thrown value when marking the task failed', async () => {
     const { agent, tasks, events, ollama, mcp, task } = createAgent();
     (ollama.chat as jest.Mock).mockResolvedValue({
@@ -502,6 +689,227 @@ describe('AgentService', () => {
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
     expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
       message: 'boom-string',
+    });
+  });
+
+  describe('search_files', () => {
+    it('executes the search directly when a root inside the workspace is given', async () => {
+      const { agent, tasks, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['หนี้'], root: 'D:\\my-work\\docs' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Found it', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find my debt sheet');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['หนี้'],
+        root: 'D:\\my-work\\docs',
+        maxResults: undefined,
+        maxDepth: undefined,
+      });
+      expect(tasks.addMessage).toHaveBeenCalledWith(
+        task.id,
+        'tool',
+        JSON.stringify({ matches: [] }),
+        'search_files',
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('passes through numeric maxResults/maxDepth arguments', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['หนี้'],
+                  root: 'D:\\my-work',
+                  maxResults: 10,
+                  maxDepth: 3,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['หนี้'],
+        root: 'D:\\my-work',
+        maxResults: 10,
+        maxDepth: 3,
+      });
+    });
+
+    it('defaults queries to an empty array when the model omits it', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { root: 'D:\\my-work' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: [],
+        root: 'D:\\my-work',
+        maxResults: undefined,
+        maxDepth: undefined,
+      });
+    });
+
+    it('always requires permission when root is omitted, even without a workspace conflict', async () => {
+      const { agent, tasks, events, permissions, ollama, mcp, task } =
+        createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'search_files',
+              arguments: { queries: ['หนี้'] },
+            },
+          },
+        ],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-search',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(task.id, 'find my debt sheet, I forgot where it is');
+      await flush();
+
+      expect(permissions.create).toHaveBeenCalledWith(
+        task.id,
+        SEARCH_EVERYWHERE_LABEL,
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+      expect(events.emit).toHaveBeenCalledWith(task.id, 'permission_required', {
+        permission: expect.objectContaining({ id: 'perm-search' }),
+      });
+      expect(mcp.searchFiles).not.toHaveBeenCalled();
+    });
+
+    it('searches everywhere once that permission is granted', async () => {
+      const { agent, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['หนี้'] },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Found it', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-search',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-search',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-search',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find my debt sheet');
+      await flush();
+
+      agent.resolvePermission(task.id, 'perm-search', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['หนี้'],
+        root: undefined,
+        maxResults: undefined,
+        maxDepth: undefined,
+      });
+    });
+
+    it('requires permission when an explicit root falls outside the workspace', async () => {
+      const { agent, tasks, permissions, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'search_files',
+              arguments: { queries: ['หนี้'], root: 'G:\\My Drive' },
+            },
+          },
+        ],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-4',
+        taskId: task.id,
+        path: 'G:\\My Drive',
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(task.id, 'find on google drive');
+      await flush();
+
+      expect(permissions.create).toHaveBeenCalledWith(task.id, 'G:\\My Drive');
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
     });
   });
 });

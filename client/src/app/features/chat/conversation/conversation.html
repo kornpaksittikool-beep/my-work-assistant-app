@@ -1,28 +1,48 @@
-<section class="conversation" aria-live="polite">
+<section class="mx-auto w-[min(100%,1050px)] flex-1 px-[30px] pt-[38px] pb-[90px] max-[620px]:px-[15px] max-[620px]:pt-[25px] max-[620px]:pb-[75px]" aria-live="polite">
   @if (store.loading()) {
-    <div class="empty-state"><span class="activity-icon spinning">◌</span><p>กำลังโหลด task...</p></div>
+    <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><span class="animate-agent-spin w-[22px] text-center text-base text-[#8591ff]">◌</span><p class="m-0 text-[13px]">กำลังโหลด task...</p></div>
   } @else if (!store.activeTask()) {
-    <div class="empty-state"><div class="brand-mark">L</div><h2>เริ่มงานกับ Local Assistant</h2><p>สร้าง task แล้วพิมพ์สิ่งที่ต้องการให้ช่วยได้เลย</p></div>
+    <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><div class="grid size-[30px] place-items-center rounded-lg bg-accent text-lg font-semibold text-white">L</div><h2 class="m-0 text-lg font-medium text-content">เริ่มงานกับ Local Assistant</h2><p class="m-0 text-[13px]">สร้าง task แล้วพิมพ์สิ่งที่ต้องการให้ช่วยได้เลย</p></div>
   } @else {
     @if (store.messages().length === 0) {
-      <div class="empty-state"><div class="brand-mark">L</div><h2>ต้องการให้ช่วยอะไร?</h2><p>Workspace: {{ store.activeTask()?.workspacePath }}</p></div>
+      <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><div class="grid size-[30px] place-items-center rounded-lg bg-accent text-lg font-semibold text-white">L</div><h2 class="m-0 text-lg font-medium text-content">ต้องการให้ช่วยอะไร?</h2><p class="m-0 text-[13px]">Workspace: {{ store.activeTask()?.workspacePath }}</p></div>
     }
 
-    @for (message of store.messages(); track message.id) {
-      <div class="message" [class.user-message]="message.role === 'user'" [class.assistant-message]="message.role === 'assistant'">
-        <div class="avatar" [class.user-avatar]="message.role === 'user'" [class.assistant-avatar]="message.role === 'assistant'">{{ message.role === 'user' ? 'ค' : 'L' }}</div>
-        <div class="message-body">
-          <div class="message-meta"><strong>{{ message.role === 'user' ? 'คุณ' : 'Local Assistant' }}</strong><time>{{ message.createdAt.slice(11, 16) }}</time></div>
-          <p>{{ message.content }}</p>
+    <div class="flex flex-col gap-3.5 max-[620px]:gap-3">
+      @for (message of store.messages(); track message.id) {
+        <article class="flex w-full" [class.justify-end]="message.role === 'user'">
+          <div
+            class="min-w-0"
+            [class]="message.role === 'user' ? 'max-w-[72%] max-[620px]:max-w-[88%]' : 'w-full max-w-[780px]'"
+          >
+            <div
+              class="prose prose-invert prose-sm max-w-none break-words leading-[1.58] text-[#e3e6ec] prose-p:my-2 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
+              [innerHTML]="message.content | markdown"
+            ></div>
+            <div class="mt-0.5 leading-none" [class.text-right]="message.role === 'user'">
+              <time class="text-[10px] text-faint/75">{{ message.createdAt.slice(11, 16) }}</time>
+            </div>
+          </div>
+        </article>
+      }
+    </div>
+
+    @if (store.streamingText()) {
+      <div class="mt-3.5 flex w-full max-[620px]:mt-3" aria-live="polite">
+        <div class="min-w-0 w-full max-w-[780px]">
+          <div
+            class="prose prose-invert prose-sm max-w-none break-words leading-[1.58] text-[#e3e6ec] prose-p:my-2 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
+            [innerHTML]="(store.streamingText() + ' ▌') | markdown"
+          ></div>
+          <div class="mt-0.5 leading-none"><time class="text-[10px] text-faint/75">กำลังตอบ · {{ store.workingSeconds() }} วิ</time></div>
         </div>
       </div>
     }
 
     @if (store.activities().length > 0 || store.pendingPermission()) {
-      <div class="message assistant-message agent-progress">
-        <div class="avatar assistant-avatar">L</div>
-        <div class="message-body">
-          <div class="message-meta"><strong>การทำงานของ Agent</strong><time>สด</time></div>
+      <div class="mb-8 flex border-t border-edge pt-[25px]">
+        <div class="min-w-0 max-w-[min(76%,640px)]">
+          <div class="flex min-h-[30px] items-center justify-between"><strong class="text-sm font-medium">การทำงานของ Agent</strong><time class="text-[11px] text-faint">สด</time></div>
           <app-activity-list [activities]="store.activities()" />
           <app-permission-card />
         </div>

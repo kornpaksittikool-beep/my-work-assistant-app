@@ -6,7 +6,7 @@ import { Conversation } from '../conversation/conversation';
 @Component({
   selector: 'app-chat-workspace',
   imports: [WorkspaceHeader, Conversation, Composer],
-  template: '<main class="workspace"><app-workspace-header /><app-conversation /><app-composer /></main>',
+  template: '<main class="flex min-h-dvh min-w-0 flex-col"><app-workspace-header /><app-conversation /><app-composer /></main>',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatWorkspace {}

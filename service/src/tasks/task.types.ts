@@ -32,6 +32,7 @@ export interface AgentEventData {
   type:
     | 'status'
     | 'message'
+    | 'message_delta'
     | 'tool_started'
     | 'tool_completed'
     | 'permission_required'

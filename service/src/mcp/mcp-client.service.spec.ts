@@ -150,4 +150,49 @@ describe('McpClientService', () => {
       'Scan MCP returned no text content',
     );
   });
+
+  describe('searchFiles', () => {
+    it('calls the search_files tool with the given arguments and returns parsed JSON', async () => {
+      mockFetchText(
+        JSON.stringify({
+          result: {
+            content: [{ type: 'text', text: JSON.stringify({ matches: [] }) }],
+          },
+        }),
+      );
+      const service = createService();
+
+      const result = await service.searchFiles({
+        queries: ['เงิน', 'หนี้สิน'],
+        root: 'D:\\my-work',
+        maxResults: 50,
+        maxDepth: 4,
+      });
+
+      expect(result).toEqual({ matches: [] });
+      const [, requestInit] = (global.fetch as jest.Mock).mock.calls[0] as [
+        string,
+        { body: string },
+      ];
+      const body = JSON.parse(requestInit.body) as {
+        params: { name: string; arguments: unknown };
+      };
+      expect(body.params.name).toBe('search_files');
+      expect(body.params.arguments).toEqual({
+        queries: ['เงิน', 'หนี้สิน'],
+        root: 'D:\\my-work',
+        maxResults: 50,
+        maxDepth: 4,
+      });
+    });
+
+    it('propagates BadGatewayException from a failed search_files call', async () => {
+      mockFetchText(JSON.stringify({ error: { message: 'path not allowed' } }));
+      const service = createService();
+
+      await expect(service.searchFiles({ queries: ['หนี้'] })).rejects.toThrow(
+        'path not allowed',
+      );
+    });
+  });
 });

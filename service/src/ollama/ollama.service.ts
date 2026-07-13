@@ -36,7 +36,10 @@ export class OllamaService {
     }
   }
 
-  async chat(messages: OllamaChatMessage[]): Promise<OllamaChatResult> {
+  async chat(
+    messages: OllamaChatMessage[],
+    onDelta?: (text: string) => void,
+  ): Promise<OllamaChatResult> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -45,9 +48,9 @@ export class OllamaService {
         signal: AbortSignal.timeout(120_000),
         body: JSON.stringify({
           model: this.model,
-          stream: false,
+          stream: true,
           messages,
-          tools: [this.scanDirectoryTool()],
+          tools: [this.scanDirectoryTool(), this.searchFilesTool()],
         }),
       });
     } catch (error) {
@@ -57,13 +60,38 @@ export class OllamaService {
     }
     if (!response.ok)
       throw new BadGatewayException(`Ollama returned HTTP ${response.status}`);
-    const body = (await response.json()) as OllamaResponse;
-    if (!body.message)
+    if (!response.body)
+      throw new BadGatewayException('Ollama returned an empty stream');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let toolCalls: OllamaToolCall[] = [];
+    let receivedChunk = false;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const chunk = JSON.parse(line) as OllamaResponse;
+        receivedChunk = true;
+        if (chunk.message?.content) {
+          content += chunk.message.content;
+          onDelta?.(chunk.message.content);
+        }
+        if (chunk.message?.tool_calls?.length) {
+          toolCalls = chunk.message.tool_calls;
+        }
+      }
+    }
+    if (!receivedChunk)
       throw new BadGatewayException('Ollama returned an invalid chat response');
-    return {
-      content: body.message.content ?? '',
-      toolCalls: body.message.tool_calls ?? [],
-    };
+    return { content, toolCalls };
   }
 
   private scanDirectoryTool(): Record<string, unknown> {
@@ -72,11 +100,41 @@ export class OllamaService {
       function: {
         name: 'scan_directory',
         description:
-          'List files and folders at the top level of an allowed local directory.',
+          'List files and folders at the top level of an allowed local directory. Use this to browse a folder you already know the path to.',
         parameters: {
           type: 'object',
           required: ['path'],
           properties: { path: { type: 'string' } },
+        },
+      },
+    };
+  }
+
+  private searchFilesTool(): Record<string, unknown> {
+    return {
+      type: 'function',
+      function: {
+        name: 'search_files',
+        description:
+          "Recursively search for a file or folder by name when you don't know exactly where it is. Omit `root` to search every allowed location on the machine at once; pass `root` to restrict the search to one location.",
+        parameters: {
+          type: 'object',
+          required: ['queries'],
+          properties: {
+            queries: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              maxItems: 20,
+              description:
+                'One or more substrings to match against file/folder names (case-insensitive). A name matches when it contains ANY query (OR). Put alternative words in separate array items.',
+            },
+            root: {
+              type: 'string',
+              description:
+                'Optional absolute path to restrict the search to. Omit to search every allowed root.',
+            },
+          },
         },
       },
     };

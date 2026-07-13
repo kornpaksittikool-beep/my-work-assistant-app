@@ -8,7 +8,7 @@ import { Sidebar } from './layout/sidebar/sidebar';
   selector: 'app-root',
   imports: [Sidebar, ChatWorkspace, WorkspacePanel],
   templateUrl: './app.html',
-  styleUrl: './app.scss',
+  host: { class: 'block min-h-dvh' },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {

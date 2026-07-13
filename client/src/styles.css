@@ -1,0 +1,36 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@theme {
+  --font-sans: 'Noto Sans Thai', 'Segoe UI', sans-serif;
+  --color-app-bg: #0c0e12;
+  --color-sidebar: #0a0c10;
+  --color-surface: #11141a;
+  --color-surface-2: #151920;
+  --color-surface-3: #1a1f28;
+  --color-edge: #252b35;
+  --color-edge-strong: #343c49;
+  --color-content: #f1f3f7;
+  --color-muted: #979eaa;
+  --color-faint: #656d79;
+  --color-accent: #6170f3;
+  --color-accent-hover: #7180ff;
+  --color-success: #4fcd75;
+  --color-danger: #e17878;
+}
+
+@layer base {
+  :root { color-scheme: dark; font-synthesis: none; }
+  html, body { @apply m-0 min-h-full min-w-80 bg-app-bg text-content; }
+  body { @apply min-h-dvh font-sans; }
+  button, textarea { font: inherit; }
+  button { color: inherit; }
+  svg { @apply size-5 fill-none stroke-current; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  kbd { font: inherit; font-size: 11px; }
+}
+
+@utility animate-agent-spin {
+  animation: agent-spin 1.4s linear infinite;
+}
+
+@keyframes agent-spin { to { transform: rotate(360deg); } }

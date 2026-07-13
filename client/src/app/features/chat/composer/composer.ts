@@ -13,7 +13,7 @@ export class Composer {
   protected draft = '';
 
   protected send(): void {
-    if (!this.draft.trim()) return;
+    if (!this.draft.trim() || this.store.isWorking()) return;
     this.store.sendMessage(this.draft);
     this.draft = '';
   }

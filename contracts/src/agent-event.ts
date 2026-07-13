@@ -1,6 +1,7 @@
 export type AgentEventType =
   | 'status'
   | 'message'
+  | 'message_delta'
   | 'tool_started'
   | 'tool_completed'
   | 'permission_required'

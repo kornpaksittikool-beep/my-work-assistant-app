@@ -1,10 +1,10 @@
-<div class="activity-list">
+<div class="mt-[19px] grid gap-[7px]">
   @for (activity of activities(); track activity.label) {
-    <div class="activity-row">
-      <span class="activity-icon" [class.spinning]="activity.state === 'working'">
+    <div class="flex min-h-[50px] w-full items-center gap-[11px] rounded-[7px] border border-edge-strong bg-transparent px-[15px] text-muted">
+      <span class="w-[22px] text-center text-base" [class]="activity.state === 'working' ? 'animate-agent-spin text-[#8591ff]' : 'text-success'">
         @if (activity.state === 'done') { ✓ } @else if (activity.state === 'working') { ◌ } @else { ◷ }
       </span>
-      <span>{{ activity.label }}</span><small>{{ activity.detail }}</small>
+      <span class="flex-1 text-content">{{ activity.label }}</span><small class="text-muted">{{ activity.detail }}</small>
     </div>
   }
 </div>

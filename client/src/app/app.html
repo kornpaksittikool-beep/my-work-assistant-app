@@ -1,6 +1,15 @@
-<div class="app-shell" [class.sidebar-collapsed]="store.sidebarCollapsed()">
+<div
+  class="grid min-h-dvh grid-cols-[300px_minmax(0,1fr)] bg-app-bg max-[900px]:grid-cols-[72px_minmax(0,1fr)] max-[620px]:block"
+  [class]="store.sidebarCollapsed() ? '!grid-cols-[68px_minmax(0,1fr)]' : ''"
+>
   <app-sidebar />
   <app-chat-workspace />
   @if (store.workspacePanelOpen()) { <app-workspace-panel /> }
-  @if (store.error(); as error) { <div class="error-toast"><span>!</span>{{ error }}<button type="button" (click)="store.error.set(null)">×</button></div> }
+  @if (store.error(); as error) {
+    <div class="fixed right-5 bottom-5 z-50 flex max-w-[min(420px,calc(100vw-40px))] items-center gap-2.5 rounded-lg border border-danger/35 bg-[#251719] px-3.5 py-3 text-[13px] text-[#f0c0c0] shadow-[0_12px_35px_rgba(0,0,0,.35)]">
+      <span class="grid size-5 place-items-center rounded-full bg-danger font-semibold text-[#181012]">!</span>
+      {{ error }}
+      <button class="ml-auto cursor-pointer border-0 bg-transparent" type="button" (click)="store.error.set(null)">×</button>
+    </div>
+  }
 </div>

@@ -1,11 +1,11 @@
-<header class="workspace-header">
-  <div class="task-heading">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4"/></svg>
+<header class="flex min-h-[82px] justify-between gap-5 border-b border-edge bg-app-bg/90 px-7 py-4 max-[900px]:px-5 max-[620px]:min-h-[72px] max-[620px]:px-[15px] max-[620px]:py-[13px]">
+  <div class="flex min-w-0 items-center gap-3">
+    <svg class="shrink-0 text-muted max-[620px]:hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4"/></svg>
     <div>
-      <div class="title-line"><h1>{{ store.activeTaskTitle() }}</h1></div>
-      <div class="context-row">
-        <button type="button" (click)="store.toggleWorkspacePanel()">Workspace: <strong>{{ store.activeTask()?.workspacePath || 'ยังไม่เลือก' }}</strong></button>
-        @if (store.pendingPermission(); as permission) { <span>ขอสิทธิ์: <strong>{{ permission.path }}</strong></span> }
+      <div class="flex items-center gap-[7px]"><h1 class="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-lg font-medium max-[620px]:max-w-[190px] max-[620px]:text-[15px]">{{ store.activeTaskTitle() }}</h1></div>
+      <div class="mt-1.5 flex items-center gap-2 text-[11px] text-faint">
+        <button class="cursor-pointer rounded-[5px] border border-edge bg-transparent px-[7px] py-[3px]" type="button" (click)="store.toggleWorkspacePanel()">Workspace: <strong class="font-normal text-muted">{{ store.activeTask()?.workspacePath || 'กำลังโหลด...' }}</strong></button>
+        @if (store.pendingPermission(); as permission) { <span class="rounded-[5px] border border-edge px-[7px] py-[3px] max-[900px]:hidden">ขอสิทธิ์: <strong class="font-normal text-muted">{{ permission.path }}</strong></span> }
       </div>
     </div>
   </div>

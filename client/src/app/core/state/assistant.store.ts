@@ -10,25 +10,58 @@ export class AssistantStore {
   private readonly api = inject(AssistantApiService);
   private readonly taskEvents = inject(TaskEventsService);
   private eventsSubscription?: Subscription;
+  private pendingStreamText = '';
+  private streamFrame?: number;
+  private workTimer?: ReturnType<typeof setInterval>;
+  private workStartedAt = 0;
 
   readonly sidebarCollapsed = signal(false);
   readonly workspacePanelOpen = signal(false);
   readonly tasks = signal<AssistantTask[]>([]);
   readonly activeTaskId = signal<string | null>(null);
   readonly activities = signal<ActivityItem[]>([]);
+  readonly streamingText = signal('');
   readonly pendingPermission = signal<PermissionRequest | null>(null);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  readonly activeModel = signal('กำลังโหลด...');
+  readonly modelAvailable = signal<boolean | null>(null);
+  readonly workingSeconds = signal(0);
 
   readonly activeTask = computed(() => this.tasks().find((task) => task.id === this.activeTaskId()) ?? null);
   readonly activeTaskTitle = computed(() => this.activeTask()?.title ?? 'งานใหม่');
   readonly messages = computed(() => this.activeTask()?.messages.filter((message) => message.role !== 'tool') ?? []);
   readonly isWorking = computed(() => this.activeTask()?.status === 'working');
+  readonly currentWork = computed(() => {
+    if (this.pendingPermission()) return { label: 'กำลังรอการอนุญาต', detail: 'เลือกอนุญาตหรือปฏิเสธเพื่อทำงานต่อ' };
+    if (this.streamingText()) return { label: 'กำลังสร้างคำตอบ', detail: 'กำลังรับข้อความจากโมเดล' };
+    const activities = this.activities();
+    const activity = [...activities].reverse().find((item) => item.state === 'working') ?? activities[activities.length - 1];
+    if (activity) return { label: activity.label, detail: activity.detail };
+    return { label: 'กำลังคิดและวางแผน', detail: 'ส่งคำขอไปยังโมเดลแล้ว' };
+  });
 
-  constructor() { this.loadTasks(); }
+  constructor() {
+    this.refreshModel();
+    this.loadTasks();
+  }
 
   toggleSidebar(): void { this.sidebarCollapsed.update((value) => !value); }
   toggleWorkspacePanel(): void { this.workspacePanelOpen.update((value) => !value); }
+
+  refreshModel(): void {
+    this.modelAvailable.set(null);
+    this.api.getHealth().subscribe({
+      next: ({ data }) => {
+        this.activeModel.set(data.ollama.model);
+        this.modelAvailable.set(data.ollama.available);
+      },
+      error: () => {
+        this.activeModel.set('ไม่ทราบโมเดล');
+        this.modelAvailable.set(false);
+      },
+    });
+  }
 
   loadTasks(): void {
     this.loading.set(true);
@@ -44,8 +77,11 @@ export class AssistantStore {
   }
 
   selectTask(id: string): void {
+    this.stopWorkTimer();
+    this.workingSeconds.set(0);
     this.activeTaskId.set(id);
     this.activities.set([]);
+    this.clearStreamingText();
     this.pendingPermission.set(null);
     this.subscribeToEvents(id);
     this.api.getTask(id).subscribe({ next: ({ data }) => this.upsertTask(data), error: () => this.handleError('โหลด task ไม่สำเร็จ') });
@@ -67,10 +103,15 @@ export class AssistantStore {
     if (!task || !normalized) return;
     const optimistic: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content: normalized, createdAt: new Date().toISOString() };
     this.patchActiveTask({ ...task, status: 'working', messages: [...task.messages, optimistic] });
+    this.startWorkTimer();
+    this.activities.set([]);
+    this.clearStreamingText();
+    this.pendingPermission.set(null);
     this.error.set(null);
     this.api.sendMessage(task.id, normalized).subscribe({
       next: ({ data }) => this.upsertTask(data),
       error: () => {
+        this.stopWorkTimer();
         this.removeMessage(optimistic.id);
         this.handleError('ส่งข้อความไม่สำเร็จ');
       },
@@ -113,9 +154,14 @@ export class AssistantStore {
     if (event.taskId !== this.activeTaskId()) return;
     const payload = event.payload as Record<string, unknown>;
     if (event.type === 'status') {
-      this.patchStatus(String(payload['status']) as TaskStatus);
-      this.addActivity(event.id, String(payload['text'] ?? 'อัปเดตสถานะ'), this.statusLabel(String(payload['status']) as TaskStatus), 'working');
+      const status = String(payload['status']) as TaskStatus;
+      this.patchStatus(status);
+      if (status === 'working') this.startWorkTimer();
+      else if (status === 'completed' || status === 'stopped' || status === 'failed') this.stopWorkTimer();
+    } else if (event.type === 'message_delta') {
+      this.queueStreamDelta(String(payload['delta'] ?? ''));
     } else if (event.type === 'tool_started') {
+      this.clearStreamingText();
       this.addActivity(event.id, `เรียก ${String(payload['tool'])}`, String(payload['path'] ?? ''), 'working');
     } else if (event.type === 'tool_completed') {
       this.finishWorkingActivities();
@@ -124,15 +170,59 @@ export class AssistantStore {
       this.patchStatus('waiting_permission');
       this.pendingPermission.set(payload['permission'] as PermissionRequest);
     } else if (event.type === 'message') {
+      this.clearStreamingText();
       this.appendMessage(payload['message'] as ChatMessage);
     } else if (event.type === 'completed') {
+      this.clearStreamingText();
+      this.stopWorkTimer();
       this.finishWorkingActivities();
       this.patchStatus('completed');
     } else if (event.type === 'error') {
+      this.clearStreamingText();
+      this.stopWorkTimer();
       this.finishWorkingActivities('failed');
       this.patchStatus('failed');
       this.error.set(String(payload['message'] ?? 'Agent ทำงานไม่สำเร็จ'));
     }
+  }
+
+  private startWorkTimer(): void {
+    if (this.workTimer !== undefined) return;
+    this.workStartedAt = Date.now();
+    this.workingSeconds.set(0);
+    this.workTimer = setInterval(() => {
+      this.workingSeconds.set(Math.floor((Date.now() - this.workStartedAt) / 1000));
+    }, 250);
+  }
+
+  private stopWorkTimer(): void {
+    if (this.workTimer !== undefined) clearInterval(this.workTimer);
+    this.workTimer = undefined;
+    if (this.workStartedAt) {
+      this.workingSeconds.set(Math.floor((Date.now() - this.workStartedAt) / 1000));
+    }
+  }
+
+  private queueStreamDelta(delta: string): void {
+    if (!delta) return;
+    this.pendingStreamText += delta;
+    if (this.streamFrame !== undefined) return;
+
+    // Coalesce token bursts into one paint. Updating the signal for every tiny
+    // Ollama chunk causes unnecessary DOM work and makes the text look jittery.
+    this.streamFrame = requestAnimationFrame(() => {
+      const text = this.pendingStreamText;
+      this.pendingStreamText = '';
+      this.streamFrame = undefined;
+      if (text) this.streamingText.update((current) => current + text);
+    });
+  }
+
+  private clearStreamingText(): void {
+    if (this.streamFrame !== undefined) cancelAnimationFrame(this.streamFrame);
+    this.streamFrame = undefined;
+    this.pendingStreamText = '';
+    this.streamingText.set('');
   }
 
   private upsertTask(task: AssistantTask, first = false): void {

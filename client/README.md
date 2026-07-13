@@ -29,17 +29,20 @@ Interaction ที่ทดลองได้:
 - ย่อ sidebar
 - เปิด workspace panel
 - อนุญาตหรือปฏิเสธ permission request
-- ส่งข้อความด้วยปุ่มส่งหรือ Enter
+- ส่งข้อความด้วยปุ่มส่งหรือ Enter (ปุ่มเดียวกันสลับเป็น "หยุด" ระหว่างที่ agent กำลังทำงาน กันการส่งซ้ำ)
 - ขึ้นบรรทัดใหม่ด้วย Shift + Enter
 - หยุดสถานะการทำงาน
+- เช็คโมเดล/สถานะ Ollama ที่ใช้งานอยู่ได้จากปุ่ม Model (กดเพื่อ refresh)
 
 การเชื่อมต่อที่มีแล้ว:
 
 - โหลด สร้าง และเลือก task ผ่าน REST API
 - ส่งข้อความไปเริ่ม agent
-- รับ status, tool activity, permission และคำตอบผ่าน SSE
+- รับคำตอบแบบ **streaming** ผ่าน SSE — เห็นข้อความทยอยขึ้นทีละคำระหว่างที่โมเดลกำลังตอบ ไม่ต้องรอครบก่อนถึงจะเห็น
+- รับ status, tool activity, permission ผ่าน SSE
 - อนุญาตหรือปฏิเสธ permission request
 - หยุด task จากหน้า client
+- เช็คโมเดล/สถานะ Ollama ผ่าน `GET /api/health`
 - แสดงข้อผิดพลาดเมื่อ service ใช้งานไม่ได้
 
 ก่อนเปิด client ให้รัน service ที่ `http://localhost:3200` และ Ollama ก่อน
@@ -49,10 +52,12 @@ Interaction ที่ทดลองได้:
 ```text
 src/app/
 ├── core/
+│   ├── api/                 REST (AssistantApiService) และ SSE (TaskEventsService) client
+│   ├── config/               ค่าคงที่ เช่น API_BASE_URL, DEFAULT_WORKSPACE_PATH
 │   ├── models/              types ที่ใช้ภายใน client
-│   └── state/               state และ actions ของแอป
+│   └── state/               state และ actions ของแอป (AssistantStore)
 ├── layout/
-│   └── sidebar/             navigation, tasks และ projects
+│   └── sidebar/             navigation และ task list
 ├── features/
 │   ├── chat/
 │   │   ├── activity-list/   สถานะ tool/agent

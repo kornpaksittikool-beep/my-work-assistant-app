@@ -10,6 +10,13 @@ interface McpResponse {
   error?: { message?: string };
 }
 
+export interface SearchFilesArgs {
+  queries: string[];
+  root?: string;
+  maxResults?: number;
+  maxDepth?: number;
+}
+
 @Injectable()
 export class McpClientService {
   private readonly scanMcpUrl: string;
@@ -19,7 +26,18 @@ export class McpClientService {
       config.get<string>('SCAN_MCP_URL') ?? 'http://localhost:3100/mcp';
   }
 
-  async scanDirectory(path: string): Promise<unknown> {
+  scanDirectory(path: string): Promise<unknown> {
+    return this.callTool('scan_directory', { path });
+  }
+
+  searchFiles(args: SearchFilesArgs): Promise<unknown> {
+    return this.callTool('search_files', { ...args });
+  }
+
+  private async callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     let response: Response;
     try {
       response = await fetch(this.scanMcpUrl, {
@@ -33,7 +51,7 @@ export class McpClientService {
           jsonrpc: '2.0',
           id: randomUUID(),
           method: 'tools/call',
-          params: { name: 'scan_directory', arguments: { path } },
+          params: { name, arguments: args },
         }),
       });
     } catch (error) {

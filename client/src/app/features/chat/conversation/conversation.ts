@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssistantStore } from '../../../core/state/assistant.store';
+import { MarkdownPipe } from '../../../core/pipes/markdown.pipe';
 import { PermissionCard } from '../../permissions/permission-card/permission-card';
 import { ActivityList } from '../activity-list/activity-list';
 
 @Component({
   selector: 'app-conversation',
-  imports: [ActivityList, PermissionCard],
+  imports: [ActivityList, PermissionCard, MarkdownPipe],
   templateUrl: './conversation.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

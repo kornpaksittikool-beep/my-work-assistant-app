@@ -1,33 +1,54 @@
-<aside class="sidebar">
-  <div class="brand-row">
-    <div class="brand">
-      <span class="brand-mark">L</span>
-      @if (!store.sidebarCollapsed()) { <span>Local Assistant</span> }
+<aside
+  class="sticky top-0 flex h-dvh flex-col gap-[17px] overflow-hidden border-r border-edge bg-sidebar px-3 pt-5 pb-4 max-[900px]:items-center max-[900px]:px-3 max-[620px]:static max-[620px]:h-auto max-[620px]:w-full max-[620px]:flex-row max-[620px]:justify-between max-[620px]:border-r-0 max-[620px]:border-b max-[620px]:px-3.5 max-[620px]:py-2.5"
+  [class]="store.sidebarCollapsed() ? 'items-center !px-[11px]' : ''"
+>
+  <div
+    class="flex min-h-[34px] items-center justify-between px-2 max-[900px]:flex-col max-[900px]:gap-3 max-[900px]:px-0 max-[620px]:flex-row"
+    [class]="store.sidebarCollapsed() ? 'flex-col gap-3 !px-0' : ''"
+  >
+    <div class="flex items-center gap-2.5 whitespace-nowrap text-[17px] font-semibold">
+      <span class="grid size-[30px] shrink-0 place-items-center rounded-lg bg-accent text-lg font-semibold text-white">L</span>
+      @if (!store.sidebarCollapsed()) { <span class="max-[900px]:hidden max-[620px]:inline">Local Assistant</span> }
     </div>
-    <button class="icon-button" type="button" (click)="store.toggleSidebar()" aria-label="ย่อแถบด้านข้าง">
+    <button class="grid size-[34px] cursor-pointer place-items-center rounded-[7px] border-0 bg-transparent p-0 text-muted hover:bg-surface-2 hover:text-content max-[620px]:hidden" type="button" (click)="store.toggleSidebar()" aria-label="ย่อแถบด้านข้าง">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
   </div>
 
-  <button class="new-task-button" type="button" (click)="store.newTask()">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-    @if (!store.sidebarCollapsed()) { <span>งานใหม่</span> }
+  <button
+    class="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-[7px] border border-[#7783ff] bg-accent px-3 text-white hover:bg-accent-hover max-[900px]:w-11 max-[900px]:justify-center max-[900px]:px-0"
+    [class]="store.sidebarCollapsed() ? '!w-11 justify-center !px-0' : ''"
+    type="button"
+    (click)="store.newTask()"
+  >
+    <svg class="size-[18px]" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    @if (!store.sidebarCollapsed()) { <span class="max-[900px]:hidden">งานใหม่</span> }
   </button>
 
   @if (!store.sidebarCollapsed()) {
-    <nav class="task-nav" aria-label="รายการงาน">
-      <p class="nav-label">งานของฉัน</p>
+    <nav class="flex-1 overflow-y-auto [scrollbar-width:thin] max-[900px]:hidden" aria-label="รายการงาน">
+      <p class="mx-2.5 mt-[9px] mb-2 text-[13px] text-muted">งานของฉัน</p>
       @for (task of store.tasks(); track task.id) {
-        <button class="task-item" type="button" [class.active]="store.activeTaskId() === task.id" (click)="store.selectTask(task.id)">
-          <span class="task-state" [class.working]="task.status === 'working'"></span>
-          <span class="task-copy"><strong>{{ task.title }}</strong><small>{{ store.statusLabel(task.status) }}</small></span>
-          <time>{{ task.updatedAt.slice(11, 16) }}</time>
+        <button
+          class="relative flex min-h-14 w-full cursor-pointer items-center gap-2.5 rounded-[7px] border-0 bg-transparent px-2.5 py-2 text-left text-muted hover:bg-surface-2 hover:text-content"
+          [class]="store.activeTaskId() === task.id ? 'bg-surface-2 text-content shadow-[inset_2px_0_0_#6170f3]' : ''"
+          type="button"
+          (click)="store.selectTask(task.id)"
+        >
+          <span class="size-2 shrink-0 rounded-full" [class]="task.status === 'working' ? 'bg-accent shadow-[0_0_0_3px_rgba(97,112,243,.15)]' : 'bg-faint'"></span>
+          <span class="grid min-w-0 gap-0.5">
+            <strong class="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium">{{ task.title }}</strong>
+            <small class="text-[11px]" [class]="store.activeTaskId() === task.id ? 'text-[#8994ff]' : 'text-faint'">{{ store.statusLabel(task.status) }}</small>
+          </span>
+          <time class="ml-auto text-[11px] text-faint">{{ task.updatedAt.slice(11, 16) }}</time>
         </button>
       }
     </nav>
 
-    <div class="sidebar-footer">
-      <div class="local-status"><span></span> Ollama ทำงานในเครื่อง</div>
+    <div class="grid gap-[9px] max-[900px]:hidden">
+      <div class="flex min-h-[42px] items-center rounded-[7px] border border-edge px-[11px] text-xs text-muted">
+        <span class="mr-2 size-2 rounded-full bg-success"></span> Ollama ทำงานในเครื่อง
+      </div>
     </div>
   }
 </aside>

@@ -92,6 +92,8 @@ NestJS Agent Service
 
 Ollama เป็น runtime สำหรับรันโมเดล AI ภายในเครื่อง ทำหน้าที่สร้างคำตอบ วิเคราะห์คำสั่ง และเลือก tool ที่เหมาะสม แต่ Ollama ไม่ควรเข้าถึงไฟล์หรือรันคำสั่งด้วยตัวเอง การกระทำเหล่านั้นต้องผ่าน Agent Service และ guardrail เสมอ
 
+สลับ model ได้ผ่าน `OLLAMA_MODEL` ใน `service/.env` โดยไม่ต้องแก้โค้ด — Client มีตัวแสดงชื่อ/สถานะ model ที่ใช้งานอยู่ (ผ่าน `GET /api/health`) ให้เช็คได้ว่าเชื่อม Ollama ติดไหมและใช้ model ตัวไหนอยู่
+
 ### 1-scan-file
 
 `../1-scan-file/` เป็นเครื่องมือแยกสำหรับดูรายการไฟล์และโฟลเดอร์ โดยเปิด MCP tool ชื่อ `scan_directory` ให้ Agent Service เรียกใช้งาน
@@ -101,7 +103,8 @@ Ollama เป็น runtime สำหรับรันโมเดล AI ภา
 - ตรวจสอบว่า path มีอยู่จริง
 - ป้องกัน path traversal
 - ป้องกัน symlink ที่ชี้ออกนอกพื้นที่อนุญาต
-- จำกัดการอ่านให้อยู่ภายใน `SCAN_ALLOWED_ROOTS`
+- จำกัดการอ่านให้อยู่ภายใน `SCAN_ALLOWED_ROOTS` (รองรับหลาย root พร้อมกัน เช่น ทั้งไดรฟ์ + โฟลเดอร์ส่วนตัวเฉพาะ)
+- กรองไฟล์/โฟลเดอร์ซ่อนและไฟล์ระบบ (dotfile, `$RECYCLE.BIN`, `System Volume Information` ฯลฯ) ออกก่อนคืนผล เพื่อให้อ่านง่ายจากมุมผู้ใช้ทั่วไป
 - คืนข้อมูลชื่อ path ประเภท ขนาด และเวลาแก้ไขของไฟล์
 
 ### Open WebUI
@@ -139,7 +142,7 @@ Open WebUI ใน `../dockers/` ใช้สำหรับทดลองแล
 
 เวอร์ชันแรกเน้น flow หลักดังนี้:
 
-1. แชทกับ Ollama และรับ lifecycle/final answer ผ่าน SSE
+1. แชทกับ Ollama แบบ streaming (ข้อความทยอยขึ้นทีละคำผ่าน SSE event `message_delta`) พร้อม lifecycle event และ final answer
 2. สร้าง task และเก็บประวัติการสนทนา
 3. เลือก workspace
 4. ให้ Agent Service เรียก `scan_directory` ผ่าน MCP

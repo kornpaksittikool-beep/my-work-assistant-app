@@ -2,6 +2,27 @@ import { BadGatewayException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OllamaService } from './ollama.service';
 
+function mockStreamResponse(lines: unknown[]) {
+  const encoder = new TextEncoder();
+  const encoded = lines.map((line) =>
+    encoder.encode(`${JSON.stringify(line)}\n`),
+  );
+  let index = 0;
+  return {
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: () => {
+          if (index < encoded.length) {
+            return Promise.resolve({ done: false, value: encoded[index++] });
+          }
+          return Promise.resolve({ done: true, value: undefined });
+        },
+      }),
+    },
+  };
+}
+
 describe('OllamaService', () => {
   const originalFetch = global.fetch;
 
@@ -49,33 +70,38 @@ describe('OllamaService', () => {
 
   describe('chat', () => {
     it('returns content and tool calls from a successful response', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
+      global.fetch = jest.fn().mockResolvedValue(
+        mockStreamResponse([
+          { message: { content: 'Hel' } },
+          {
             message: {
-              content: 'Hello',
+              content: 'lo',
               tool_calls: [
                 { function: { name: 'scan_directory', arguments: {} } },
               ],
             },
-          }),
-      });
+          },
+        ]),
+      );
       const service = createService();
+      const deltas: string[] = [];
 
-      const result = await service.chat([{ role: 'user', content: 'hi' }]);
+      const result = await service.chat(
+        [{ role: 'user', content: 'hi' }],
+        (delta) => deltas.push(delta),
+      );
 
       expect(result).toEqual({
         content: 'Hello',
         toolCalls: [{ function: { name: 'scan_directory', arguments: {} } }],
       });
+      expect(deltas).toEqual(['Hel', 'lo']);
     });
 
     it('defaults content and toolCalls when the message omits them', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ message: {} }),
-      });
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(mockStreamResponse([{ message: {} }]));
       const service = createService();
 
       const result = await service.chat([{ role: 'user', content: 'hi' }]);
@@ -106,11 +132,15 @@ describe('OllamaService', () => {
       await expect(service.chat([])).rejects.toThrow(BadGatewayException);
     });
 
-    it('throws BadGatewayException when the response has no message', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({}),
-      });
+    it('throws BadGatewayException when the response body is missing', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, body: null });
+      const service = createService();
+
+      await expect(service.chat([])).rejects.toThrow(BadGatewayException);
+    });
+
+    it('throws BadGatewayException when the stream yields no chunks', async () => {
+      global.fetch = jest.fn().mockResolvedValue(mockStreamResponse([]));
       const service = createService();
 
       await expect(service.chat([])).rejects.toThrow(BadGatewayException);

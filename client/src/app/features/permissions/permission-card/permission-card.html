@@ -1,12 +1,12 @@
 @if (store.pendingPermission(); as permission) {
-  <div class="permission-card">
-    <div class="permission-copy">
-      <span class="folder-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg></span>
-      <div><strong>ต้องการเข้าถึงข้อมูล (อ่านอย่างเดียว)</strong><p>{{ permission.path }}</p><small>เพื่ออ่านไฟล์และทำงานตามคำขอ</small></div>
+  <div class="mt-4 flex justify-between gap-[18px] rounded-lg border border-edge-strong bg-surface p-[18px] max-[620px]:flex-col">
+    <div class="flex min-w-0 items-center gap-[13px]">
+      <span class="grid size-10 shrink-0 place-items-center rounded-full border border-edge-strong"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg></span>
+      <div><strong class="text-sm font-medium">ต้องการเข้าถึงข้อมูล (อ่านอย่างเดียว)</strong><p class="my-[3px] text-sm text-content">{{ permission.path }}</p><small class="text-muted">เพื่ออ่านไฟล์และทำงานตามคำขอ</small></div>
     </div>
-    <div class="permission-actions">
-      <button class="primary-button" type="button" (click)="store.resolvePermission(true)">อนุญาต</button>
-      <button class="secondary-button" type="button" (click)="store.resolvePermission(false)">ปฏิเสธ</button>
+    <div class="flex min-w-[120px] flex-col items-center gap-[7px] max-[620px]:flex-row">
+      <button class="min-h-[37px] w-full cursor-pointer rounded-md border border-[#7783ff] bg-accent px-[15px] text-white hover:bg-accent-hover" type="button" (click)="store.resolvePermission(true)">อนุญาต</button>
+      <button class="min-h-[37px] w-full cursor-pointer rounded-md border border-edge-strong bg-transparent px-[15px]" type="button" (click)="store.resolvePermission(false)">ปฏิเสธ</button>
     </div>
   </div>
 }
