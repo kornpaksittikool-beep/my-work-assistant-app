@@ -1,5 +1,5 @@
-<footer class="sticky bottom-0 mx-auto mt-auto w-[min(100%,1120px)] bg-[linear-gradient(transparent,#0c0e12_18%)] px-[30px] pb-5 max-[620px]:px-3">
-  <div class="flex min-h-[42px] items-center justify-between gap-3 px-2 text-xs text-muted">
+<footer class="relative z-10 mx-auto w-[min(100%,780px)] bg-[linear-gradient(transparent,#0c0e12_22%)] px-3 pt-4 pb-2 max-[620px]:px-3 max-[620px]:pb-2">
+  <div class="flex min-h-7 items-center justify-between gap-3 px-3 text-[11px] text-muted">
     @if (store.isWorking() || store.pendingPermission()) {
       <div class="flex min-w-0 items-center gap-2.5" aria-live="polite">
         <span class="relative flex size-4 shrink-0 items-center justify-center">
@@ -15,12 +15,12 @@
       <span class="flex items-center gap-[9px]"><i class="size-[7px] rounded-full bg-success shadow-[0_0_0_3px_rgba(79,205,117,.12)]"></i>พร้อมรับคำสั่ง</span>
     }
   </div>
-  <div class="rounded-[10px] border border-edge-strong bg-[#11151b] p-[13px] shadow-[0_14px_45px_rgba(0,0,0,.3)]">
-    <textarea class="min-h-16 max-h-[180px] w-full resize-y border-0 bg-transparent px-[5px] py-1 leading-[1.6] text-content outline-none placeholder:text-faint" [(ngModel)]="draft" (keydown)="onKeydown($event)" placeholder="พิมพ์คำสั่งหรือคำถาม..."></textarea>
-    <div class="flex items-center justify-between gap-3">
+  <div class="rounded-[22px] border border-edge-strong/80 bg-[#1a1c20] px-3.5 pt-3 pb-2.5 shadow-[0_18px_55px_rgba(0,0,0,.42)]">
+    <textarea class="min-h-11 max-h-[150px] w-full resize-none border-0 bg-transparent px-1.5 py-0.5 text-[13px] leading-[1.55] text-content outline-none placeholder:text-faint" [(ngModel)]="draft" (keydown)="onKeydown($event)" placeholder="พิมพ์คำสั่งหรือคำถาม..."></textarea>
+    <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-2">
         <button
-          class="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-[7px] rounded-md border border-edge-strong bg-transparent px-2.5 text-xs text-muted transition-colors hover:bg-surface-2 hover:text-content"
+          class="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border-0 bg-transparent px-2 text-[11px] text-muted transition-colors hover:bg-surface-2 hover:text-content"
           type="button"
           (click)="store.refreshModel()"
           title="กดเพื่อตรวจสอบโมเดลอีกครั้ง"
@@ -33,14 +33,14 @@
           <span class="max-[720px]:hidden">Model:</span>
           <strong class="max-w-40 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-content">{{ store.activeModel() }}</strong>
         </button>
-        <button class="inline-flex h-[34px] cursor-pointer items-center gap-[7px] rounded-md border border-edge-strong bg-transparent px-2.5 text-muted max-[620px]:max-w-[175px] max-[620px]:overflow-hidden max-[620px]:whitespace-nowrap" type="button" (click)="store.toggleWorkspacePanel()">
-          <svg class="size-4" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg>Workspace: {{ store.activeTask()?.workspacePath || 'กำลังโหลด...' }}
+        <button class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border-0 bg-transparent px-2 text-[11px] text-muted hover:bg-surface-2 hover:text-content max-[620px]:max-w-[145px] max-[620px]:overflow-hidden max-[620px]:whitespace-nowrap" type="button" (click)="store.toggleWorkspacePanel()">
+          <svg class="size-4" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v10H3zM3 7.5v-3h7l2 3"/></svg>{{ store.activeTask()?.workspacePath || 'กำลังโหลด...' }}
         </button>
       </div>
       @if (store.isWorking()) {
-        <button class="flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-edge-strong bg-surface px-3 text-muted hover:bg-surface-2" type="button" (click)="store.stopWorking()"><span class="size-3 animate-spin rounded-full border-2 border-muted/25 border-t-muted"></span> กำลังทำงาน</button>
+        <button class="grid size-8 cursor-pointer place-items-center rounded-full border border-edge-strong bg-surface text-muted hover:bg-surface-2" type="button" (click)="store.stopWorking()" aria-label="หยุดการทำงาน"><span class="size-3 animate-spin rounded-full border-2 border-muted/25 border-t-muted"></span></button>
       } @else {
-        <button class="h-[38px] cursor-pointer rounded-md border border-[#7783ff] bg-accent px-3 text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-45" type="button" (click)="send()" [disabled]="!draft.trim()"><span>➤</span> ส่ง <kbd class="ml-[5px] rounded-[3px] bg-white/12 px-[5px] py-0.5">Enter</kbd></button>
+        <button class="grid size-8 cursor-pointer place-items-center rounded-full border-0 bg-accent text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-[#35383e] disabled:text-faint" type="button" (click)="send()" [disabled]="!draft.trim()" aria-label="ส่งข้อความ"><svg class="size-4" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
       }
     </div>
   </div>

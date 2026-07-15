@@ -1,4 +1,4 @@
-<section class="mx-auto w-[min(100%,1050px)] flex-1 px-[30px] pt-[38px] pb-[90px] max-[620px]:px-[15px] max-[620px]:pt-[25px] max-[620px]:pb-[75px]" aria-live="polite">
+<section class="mx-auto h-full w-[min(100%,900px)] overflow-y-auto px-[34px] pt-8 pb-8 [scrollbar-width:thin] max-[620px]:px-[15px] max-[620px]:pt-6 max-[620px]:pb-5" aria-live="polite" (click)="onContentClick($event)">
   @if (store.loading()) {
     <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><span class="animate-agent-spin w-[22px] text-center text-base text-[#8591ff]">◌</span><p class="m-0 text-[13px]">กำลังโหลด task...</p></div>
   } @else if (!store.activeTask()) {
@@ -8,18 +8,18 @@
       <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><div class="grid size-[30px] place-items-center rounded-lg bg-accent text-lg font-semibold text-white">L</div><h2 class="m-0 text-lg font-medium text-content">ต้องการให้ช่วยอะไร?</h2><p class="m-0 text-[13px]">Workspace: {{ store.activeTask()?.workspacePath }}</p></div>
     }
 
-    <div class="flex flex-col gap-3.5 max-[620px]:gap-3">
+    <div class="flex flex-col gap-5 max-[620px]:gap-4">
       @for (message of store.messages(); track message.id) {
         <article class="flex w-full" [class.justify-end]="message.role === 'user'">
           <div
             class="min-w-0"
-            [class]="message.role === 'user' ? 'max-w-[72%] max-[620px]:max-w-[88%]' : 'w-full max-w-[780px]'"
+            [class]="message.role === 'user' ? 'max-w-[68%] rounded-2xl bg-surface-3 px-4 py-2.5 shadow-[0_1px_0_rgba(255,255,255,.03)] max-[620px]:max-w-[88%]' : 'w-full max-w-[720px]'"
           >
             <div
-              class="prose prose-invert prose-sm max-w-none break-words leading-[1.58] text-[#e3e6ec] prose-p:my-2 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
+              class="prose prose-invert max-w-none break-words text-[13px] leading-[1.65] text-[#e3e6ec] prose-p:my-1.5 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
               [innerHTML]="message.content | markdown"
             ></div>
-            <div class="mt-0.5 leading-none" [class.text-right]="message.role === 'user'">
+            <div class="mt-1 leading-none" [class.text-right]="message.role === 'user'">
               <time class="text-[10px] text-faint/75">{{ message.createdAt.slice(11, 16) }}</time>
             </div>
           </div>
@@ -29,9 +29,9 @@
 
     @if (store.streamingText()) {
       <div class="mt-3.5 flex w-full max-[620px]:mt-3" aria-live="polite">
-        <div class="min-w-0 w-full max-w-[780px]">
+        <div class="min-w-0 w-full max-w-[720px]">
           <div
-            class="prose prose-invert prose-sm max-w-none break-words leading-[1.58] text-[#e3e6ec] prose-p:my-2 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
+            class="prose prose-invert max-w-none break-words text-[13px] leading-[1.65] text-[#e3e6ec] prose-p:my-1.5 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
             [innerHTML]="(store.streamingText() + ' ▌') | markdown"
           ></div>
           <div class="mt-0.5 leading-none"><time class="text-[10px] text-faint/75">กำลังตอบ · {{ store.workingSeconds() }} วิ</time></div>

@@ -164,8 +164,7 @@ export class AssistantStore {
       this.clearStreamingText();
       this.addActivity(event.id, `เรียก ${String(payload['tool'])}`, String(payload['path'] ?? ''), 'working');
     } else if (event.type === 'tool_completed') {
-      this.finishWorkingActivities();
-      this.addActivity(event.id, `${String(payload['tool'])} เสร็จแล้ว`, String(payload['path'] ?? ''), 'done');
+      this.completeWorkingActivity(`${String(payload['tool'])} เสร็จแล้ว`);
     } else if (event.type === 'permission_required') {
       this.patchStatus('waiting_permission');
       this.pendingPermission.set(payload['permission'] as PermissionRequest);
@@ -252,6 +251,16 @@ export class AssistantStore {
   }
   private finishWorkingActivities(state: ActivityItem['state'] = 'done'): void {
     this.activities.update((activities) => activities.map((activity) => activity.state === 'working' ? { ...activity, state, detail: state === 'done' ? 'เสร็จสิ้น' : 'ไม่สำเร็จ' } : activity));
+  }
+  private completeWorkingActivity(label: string): void {
+    this.activities.update((activities) => {
+      const indexFromEnd = [...activities].reverse().findIndex((activity) => activity.state === 'working');
+      if (indexFromEnd === -1) return activities;
+      const index = activities.length - 1 - indexFromEnd;
+      const updated = [...activities];
+      updated[index] = { ...updated[index], label, detail: 'เสร็จสิ้น', state: 'done' };
+      return updated;
+    });
   }
   private handleError(message: string): void { this.loading.set(false); this.error.set(message); }
 }

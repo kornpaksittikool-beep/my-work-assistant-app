@@ -58,6 +58,7 @@ type ResolvedTarget =
 export class AgentService {
   private readonly pendingRuns = new Map<string, PendingToolRun>();
   private readonly maxSteps: number;
+  private readonly filesApiBaseUrl: string;
 
   constructor(
     private readonly tasks: TasksRepository,
@@ -68,6 +69,8 @@ export class AgentService {
     config: ConfigService,
   ) {
     this.maxSteps = config.get<number>('AGENT_MAX_STEPS') ?? 5;
+    const port = config.get<number>('PORT') ?? 3200;
+    this.filesApiBaseUrl = `http://localhost:${port}/api/files`;
   }
 
   start(taskId: string, content: string): void {
@@ -122,7 +125,7 @@ export class AgentService {
     const messages: OllamaChatMessage[] = [
       {
         role: 'system',
-        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. Never invent tool results. Respond in the user's language.`,
+        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
       },
       ...task.messages
         .filter((message) => message.role !== 'tool')
@@ -152,17 +155,21 @@ export class AgentService {
     );
 
     if (!call) {
-      this.complete(taskId, result.content || 'ดำเนินการเสร็จแล้ว', stepNumber);
+      const content = this.linkifyFilePaths(
+        result.content || 'ดำเนินการเสร็จแล้ว',
+        messages,
+      );
+      this.complete(taskId, content, stepNumber);
       return;
     }
 
     if (stepNumber >= this.maxSteps) {
-      this.complete(
-        taskId,
+      const content = this.linkifyFilePaths(
         result.content ||
           'ถึงจำนวนขั้นตอนสูงสุดที่กำหนดไว้แล้ว ไม่สามารถดำเนินการต่อได้',
-        stepNumber,
+        messages,
       );
+      this.complete(taskId, content, stepNumber);
       return;
     }
 
@@ -277,6 +284,58 @@ export class AgentService {
     this.events.emit(taskId, 'error', {
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+
+  /**
+   * Rewrites every occurrence of a path found in this run's tool results into
+   * a Markdown link that opens it via FilesController, so the model doesn't
+   * need to produce correct link/URI syntax itself for arbitrary Windows
+   * paths (including Thai filenames) - only mention the same path text the
+   * tool already returned.
+   */
+  private linkifyFilePaths(
+    content: string,
+    messages: OllamaChatMessage[],
+  ): string {
+    const files = new Map<string, string>();
+    for (const message of messages) {
+      if (message.role !== 'tool') continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(message.content);
+      } catch {
+        continue;
+      }
+      if (!parsed || typeof parsed !== 'object') continue;
+      const record = parsed as Record<string, unknown>;
+      const list = Array.isArray(record.entries)
+        ? record.entries
+        : Array.isArray(record.matches)
+          ? record.matches
+          : [];
+      for (const item of list) {
+        if (
+          item &&
+          typeof item === 'object' &&
+          typeof (item as Record<string, unknown>).name === 'string' &&
+          typeof (item as Record<string, unknown>).path === 'string'
+        ) {
+          const entry = item as { name: string; path: string };
+          files.set(entry.path, entry.name);
+        }
+      }
+    }
+
+    let result = content;
+    const paths = [...files.keys()].sort((a, b) => b.length - a.length);
+    for (const path of paths) {
+      const name = files.get(path)!.replace(/([[\]])/g, '\\$1');
+      const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp('`?' + escapedPath + '`?', 'g');
+      const url = `${this.filesApiBaseUrl}/open?path=${encodeURIComponent(path)}`;
+      result = result.replace(pattern, `[${name}](${url})`);
+    }
+    return result;
   }
 
   private isWithin(candidate: string, root: string): boolean {
