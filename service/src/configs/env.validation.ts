@@ -54,6 +54,10 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   CORS_ORIGIN?: string;
+
+  @IsOptional()
+  @IsString()
+  TASKS_DATA_FILE?: string;
 }
 
 export function validate(

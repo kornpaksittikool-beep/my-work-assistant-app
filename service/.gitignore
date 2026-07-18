@@ -52,5 +52,9 @@ pids
 *.seed
 *.pid.lock
 
+# Persisted tasks/conversations (see TasksRepository) - local runtime data,
+# not source
+/data
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
