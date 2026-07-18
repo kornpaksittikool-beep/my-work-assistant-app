@@ -12,6 +12,7 @@ interface McpResponse {
 
 export interface SearchFilesArgs {
   queries: string[];
+  fuzzy?: boolean;
   extensions?: string[];
   root?: string;
   maxResults?: number;

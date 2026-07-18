@@ -13,6 +13,7 @@ import { AssistantTask } from '../tasks/task.types';
 import { OllamaChatMessage } from '../ollama/ollama.types';
 import {
   FILE_CONTENT_UNAVAILABLE_RESPONSE,
+  FILE_MUTATION_UNAVAILABLE_RESPONSE,
   UNVERIFIED_FILE_RESPONSE,
 } from './tool-policy';
 
@@ -58,7 +59,10 @@ describe('AgentService', () => {
       findOne: jest.fn().mockReturnValue(task),
     } as unknown as TasksRepository;
     const events = { emit: jest.fn() } as unknown as TaskEventsService;
-    const ollama = { chat: jest.fn() } as unknown as OllamaService;
+    const ollama = {
+      chat: jest.fn(),
+      planFileSearch: jest.fn().mockResolvedValue(null),
+    } as unknown as OllamaService;
     const mcp = {
       scanDirectory: jest.fn(),
       searchFiles: jest.fn(),
@@ -112,6 +116,109 @@ describe('AgentService', () => {
       status: 'completed',
       stepsUsed: 1,
     });
+  });
+
+  it('executes a dynamic search plan directly for a topic-based file request', async () => {
+    const { agent, ollama, mcp, task } = createAgent();
+    (ollama.planFileSearch as jest.Mock).mockResolvedValue({
+      queries: ['finance', 'budget', 'accounting'],
+      fuzzy: true,
+    });
+    (mcp.searchFiles as jest.Mock).mockResolvedValue({
+      matches: [
+        {
+          name: 'finance-report.xlsx',
+          path: 'D:\\my-work\\finance-report.xlsx',
+        },
+      ],
+      rootsSearched: [task.workspacePath],
+      truncated: false,
+    });
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'Found a potentially relevant filename.',
+      toolCalls: [],
+    });
+
+    agent.start(task.id, 'find files related to finance in this workspace');
+    await flush();
+    await flush();
+
+    expect(ollama.planFileSearch).toHaveBeenCalledWith(
+      'find files related to finance in this workspace',
+    );
+    expect(mcp.searchFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queries: ['finance', 'budget', 'accounting'],
+        fuzzy: true,
+        root: task.workspacePath,
+        maxResults: 25,
+      }),
+    );
+    expect(ollama.chat).toHaveBeenCalledTimes(1);
+    const chatCalls = (ollama.chat as jest.Mock).mock.calls as unknown[][];
+    const summaryMessages = chatCalls[0][0] as OllamaChatMessage[];
+    expect(
+      summaryMessages.some(
+        (message) =>
+          message.role === 'system' &&
+          message.content.includes('returned 1 real filename match'),
+      ),
+    ).toBe(true);
+  });
+
+  it('uses an explicit absolute path from a dynamic topic request as the recursive search root', async () => {
+    const { agent, ollama, mcp, permissions, task } = createAgent();
+    (ollama.planFileSearch as jest.Mock).mockResolvedValue({
+      queries: ['การเงิน', 'รายรับ', 'รายจ่าย'],
+      fuzzy: true,
+    });
+    (mcp.searchFiles as jest.Mock).mockResolvedValue({
+      matches: [],
+      rootsSearched: [task.workspacePath],
+      truncated: false,
+    });
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'ไม่พบไฟล์',
+      toolCalls: [],
+    });
+
+    agent.start(
+      task.id,
+      'เฉพาะใน workspace D:\\my-work ช่วยหาไฟล์เกี่ยวกับการเงินให้หน่อย',
+    );
+    await flush();
+    await flush();
+
+    expect(mcp.searchFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root: 'D:\\my-work',
+        fuzzy: true,
+        queries: expect.arrayContaining(['การเงิน', 'เงิน']),
+      }),
+    );
+    expect(permissions.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps search-everywhere permission checks for a dynamic plan', async () => {
+    const { agent, ollama, mcp, permissions, task } = createAgent();
+    (ollama.planFileSearch as jest.Mock).mockResolvedValue({
+      queries: ['mortgage', 'loan'],
+      fuzzy: true,
+    });
+    (permissions.create as jest.Mock).mockReturnValue({
+      id: 'permission-1',
+      taskId: task.id,
+      path: SEARCH_EVERYWHERE_LABEL,
+    });
+
+    agent.start(task.id, 'find files about a mortgage');
+    await flush();
+
+    expect(permissions.create).toHaveBeenCalledWith(
+      task.id,
+      SEARCH_EVERYWHERE_LABEL,
+    );
+    expect(mcp.searchFiles).not.toHaveBeenCalled();
   });
 
   it('reports stepsUsed of 1 when a configured AGENT_MAX_STEPS of 1 stops it immediately', async () => {
@@ -1009,31 +1116,31 @@ describe('AgentService', () => {
     it.each(['\\.md', '\\.md$', '/\\.md$/'])(
       'drops extension-only query %s when an extension filter is active',
       async (extensionQuery) => {
-      const { agent, mcp, ollama, task } = createAgent();
-      (ollama.chat as jest.Mock)
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              function: {
-                name: 'search_files',
-                arguments: {
-                  queries: [extensionQuery],
-                  root: 'D:\\my-work',
+        const { agent, mcp, ollama, task } = createAgent();
+        (ollama.chat as jest.Mock)
+          .mockResolvedValueOnce({
+            content: '',
+            toolCalls: [
+              {
+                function: {
+                  name: 'search_files',
+                  arguments: {
+                    queries: [extensionQuery],
+                    root: 'D:\\my-work',
+                  },
                 },
               },
-            },
-          ],
-        })
-        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
-      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+            ],
+          })
+          .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+        (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
 
-      agent.start(task.id, 'หาไฟล์ .md ในโปรเจกต์นี้');
-      await flush();
+        agent.start(task.id, 'หาไฟล์ .md ในโปรเจกต์นี้');
+        await flush();
 
-      expect(mcp.searchFiles).toHaveBeenCalledWith(
-        expect.objectContaining({ queries: [], extensions: ['.md'] }),
-      );
+        expect(mcp.searchFiles).toHaveBeenCalledWith(
+          expect.objectContaining({ queries: [], extensions: ['.md'] }),
+        );
       },
     );
 
@@ -1156,9 +1263,7 @@ describe('AgentService', () => {
     });
 
     it('translates modifiedRange into local calendar-day boundaries', async () => {
-      jest
-        .useFakeTimers()
-        .setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
       try {
         const { agent, mcp, ollama, task } = createAgent();
         (ollama.chat as jest.Mock)
@@ -1250,7 +1355,10 @@ describe('AgentService', () => {
         .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
       (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
 
-      agent.start(task.id, 'หาไฟล์ หนี้ ของฉันให้หน่อย ฉันจำไม่ได้ว่าเก็บไว้ไหนอะ');
+      agent.start(
+        task.id,
+        'หาไฟล์ หนี้ ของฉันให้หน่อย ฉันจำไม่ได้ว่าเก็บไว้ไหนอะ',
+      );
       await flush();
 
       expect(mcp.searchFiles).toHaveBeenCalledWith({
@@ -1760,6 +1868,44 @@ describe('AgentService', () => {
       );
     });
 
+    it('recovers an explicit absolute directory path when the model ignores both tool prompts', async () => {
+      const { agent, tasks, events, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ระบุ path ให้ชัดเจนขึ้น',
+        toolCalls: [],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-absolute-path',
+        taskId: task.id,
+        path: 'C:\\Windows\\System32',
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(
+        task.id,
+        'ช่วยสแกนดูรายการชั้นแรกใน C:\\Windows\\System32 ให้หน่อย',
+      );
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(2);
+      expect(permissions.create).toHaveBeenCalledWith(
+        task.id,
+        'C:\\Windows\\System32',
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+      expect(events.emit).toHaveBeenCalledWith(
+        task.id,
+        'permission_required',
+        expect.objectContaining({ permission: expect.anything() }),
+      );
+    });
+
     it('does not retry a mutation request (e.g. delete) even with zero tool calls, since no tool supports it', async () => {
       const { agent, tasks, ollama, task } = createAgent();
       (ollama.chat as jest.Mock).mockResolvedValue({
@@ -1770,11 +1916,11 @@ describe('AgentService', () => {
       agent.start(task.id, 'ช่วยลบไฟล์ README.md ให้หน่อย');
       await flush();
 
-      expect(ollama.chat).toHaveBeenCalledTimes(1);
+      expect(ollama.chat).not.toHaveBeenCalled();
       expect(tasks.addMessage).toHaveBeenCalledWith(
         task.id,
         'assistant',
-        'ฉันไม่สามารถลบไฟล์ได้',
+        FILE_MUTATION_UNAVAILABLE_RESPONSE,
         undefined,
         undefined,
       );
@@ -1830,7 +1976,8 @@ describe('AgentService', () => {
         String(now.getMonth() + 1).padStart(2, '0'),
         String(now.getDate()).padStart(2, '0'),
       ].join('-');
-      const firstCallMessages = (ollama.chat as jest.Mock).mock.calls[0][0] as Array<{
+      const chatCalls = (ollama.chat as jest.Mock).mock.calls as unknown[][];
+      const firstCallMessages = chatCalls[0][0] as Array<{
         role: string;
         content: string;
       }>;
@@ -2053,7 +2200,7 @@ describe('AgentService', () => {
       ]);
 
       expect(result).toBe(
-        'Open [Q1 \\[final\\].txt](http://localhost:3200/api/files/open?path=C%3A%5CReports%5CQ1%20(final).txt)',
+        'Open [Q1 \\[final\\].txt](http://localhost:3200/api/files/open?path=C%3A%5CReports%5CQ1%20(final).txt)\nตำแหน่ง: `C:\\Reports\\Q1 (final).txt`',
       );
     });
 
@@ -2093,8 +2240,52 @@ describe('AgentService', () => {
       );
 
       expect(result).toBe(
-        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) ขนาด 970 ไบต์`,
+        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) ขนาด 970 ไบต์\nตำแหน่ง: \`${path}\``,
       );
+    });
+
+    it('keeps an existing trusted Markdown link intact and adds one path line', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const path = 'G:\\My Drive\\Ta\\finance.gsheet';
+      const url = `http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}`;
+
+      const result = linkifier.linkifyFilePaths(
+        `ชื่อ: [finance.gsheet](${url})`,
+        [
+          {
+            role: 'tool',
+            content: JSON.stringify({
+              matches: [{ name: 'finance.gsheet', path }],
+            }),
+          },
+        ],
+      );
+
+      expect(result).toBe(
+        `ชื่อ: [finance.gsheet](${url})\nตำแหน่ง: \`${path}\``,
+      );
+    });
+
+    it('replaces a model location field with separate filename and path lines', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const path = 'G:\\My Drive\\Ta\\finance.gsheet';
+      const url = `http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}`;
+
+      const result = linkifier.linkifyFilePaths(
+        `- **ตำแหน่ง**: [finance.gsheet](${url})`,
+        [
+          {
+            role: 'tool',
+            content: JSON.stringify({
+              matches: [{ name: 'finance.gsheet', path }],
+            }),
+          },
+        ],
+      );
+
+      expect(result).toBe(`- [finance.gsheet](${url})\nตำแหน่ง: \`${path}\``);
     });
 
     it('strips backticks around a bare filename rather than leaving the Markdown link nested inside a code span (observed: renders as literal text, not a link)', () => {
@@ -2115,7 +2306,7 @@ describe('AgentService', () => {
       );
 
       expect(result).toBe(
-        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) (ขนาด 970 ไบต์)`,
+        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) (ขนาด 970 ไบต์)\nตำแหน่ง: \`${path}\``,
       );
     });
 
@@ -2156,7 +2347,7 @@ describe('AgentService', () => {
       ]);
 
       expect(result).toBe(
-        `ดูไฟล์ [README.md](http://localhost:3200/api/files/open?path=${encodeURIComponent('D:\\my-work\\README.md')}) ก่อน`,
+        `ดูไฟล์ [README.md](http://localhost:3200/api/files/open?path=${encodeURIComponent('D:\\my-work\\README.md')}) ก่อน\nตำแหน่ง: \`D:\\my-work\\README.md\``,
       );
     });
 
@@ -2169,9 +2360,7 @@ describe('AgentService', () => {
         {
           role: 'tool',
           content: JSON.stringify({
-            matches: [
-              { name: 'README', path: 'D:\\my-work\\dockers\\README' },
-            ],
+            matches: [{ name: 'README', path: 'D:\\my-work\\dockers\\README' }],
           }),
         },
       ]);
@@ -2204,7 +2393,7 @@ describe('AgentService', () => {
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
   });
 
-  it('caps read_file at a model-facing default maxBytes when the model omits it, instead of the tool\'s own larger default', async () => {
+  it("caps read_file at a model-facing default maxBytes when the model omits it, instead of the tool's own larger default", async () => {
     const { agent, mcp, ollama, task } = createAgent();
     (ollama.chat as jest.Mock)
       .mockResolvedValueOnce({
@@ -2258,10 +2447,7 @@ describe('AgentService', () => {
     agent.start(task.id, 'อ่าน README.md แล้วสรุปเนื้อหา');
     await flush();
 
-    expect(mcp.readFile).toHaveBeenCalledWith(
-      'D:\\my-work\\README.md',
-      4096,
-    );
+    expect(mcp.readFile).toHaveBeenCalledWith('D:\\my-work\\README.md', 4096);
     expect(tasks.addMessage).toHaveBeenCalledWith(
       task.id,
       'assistant',

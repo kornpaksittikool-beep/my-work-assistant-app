@@ -16,6 +16,7 @@ import {
   evaluateToolPolicy,
   FILE_CONTENT_UNAVAILABLE_RESPONSE,
   FILE_METADATA_POLICY_PROMPT,
+  FILE_MUTATION_UNAVAILABLE_RESPONSE,
   UNVERIFIED_FILE_RESPONSE,
 } from './tool-policy';
 import { formatToolResultForModel } from './file-metadata-format';
@@ -316,6 +317,13 @@ export class AgentService {
 
   private async run(taskId: string): Promise<void> {
     const task = this.tasks.findOne(taskId);
+    const latestUserMessage = [...task.messages]
+      .reverse()
+      .find((message) => message.role === 'user')?.content;
+    if (latestUserMessage && evaluateToolPolicy(latestUserMessage).isMutation) {
+      this.complete(taskId, FILE_MUTATION_UNAVAILABLE_RESPONSE, 0);
+      return;
+    }
     const currentLocalDate = this.currentLocalDate();
     const messages: OllamaChatMessage[] = [
       {
@@ -334,6 +342,49 @@ export class AgentService {
           content: message.content,
         })),
     ];
+
+    const decision = evaluateToolPolicy(latestUserMessage ?? '');
+    if (
+      latestUserMessage &&
+      decision.requiresFileEvidence &&
+      !decision.isDirectoryListing &&
+      !decision.requestsFileContent
+    ) {
+      const plan = await this.ollama.planFileSearch(latestUserMessage);
+      if (plan) {
+        const plannedQueries = this.expandPlannedQueries(plan.queries);
+        const { requiresPermission, ...target } = this.resolveTarget(
+          'search_files',
+          { queries: plannedQueries, fuzzy: plan.fuzzy },
+          task.workspacePath,
+          latestUserMessage,
+        );
+        const pending: PendingToolRun = {
+          taskId,
+          messages: [
+            ...messages,
+            {
+              role: 'system',
+              content: `${THAI_EMPTY_SEARCH_NUDGE_MARKER} Dynamic search planning already expanded this request into multiple filename queries. Do not retry an empty result only to add more synonyms; summarize the verified result instead.`,
+            },
+          ],
+          stepNumber: 1,
+          ...target,
+        };
+        if (requiresPermission) {
+          const permission = this.permissions.create(
+            taskId,
+            pending.displayPath,
+          );
+          this.pendingRuns.set(permission.id, pending);
+          this.tasks.setStatus(taskId, 'waiting_permission');
+          this.events.emit(taskId, 'permission_required', { permission });
+          return;
+        }
+        await this.executeTool(pending);
+        return;
+      }
+    }
     await this.step(taskId, messages, 1);
   }
 
@@ -374,9 +425,13 @@ export class AgentService {
       // the real path from the user's words and enter the normal permission
       // flow instead of accepting an unverified answer.
       if (retriedNoTool) {
-        const directScanPath = this.resolveDirectSpecialFolderScan(
-          this.lastUserMessageText(messages),
-        );
+        const directScanPath =
+          this.resolveDirectSpecialFolderScan(
+            this.lastUserMessageText(messages),
+          ) ??
+          this.resolveDirectAbsolutePathScan(
+            this.lastUserMessageText(messages),
+          );
         if (directScanPath) {
           const pending: PendingToolRun = {
             taskId,
@@ -387,10 +442,7 @@ export class AgentService {
             displayPath: directScanPath,
           };
           if (!this.isWithin(directScanPath, task.workspacePath)) {
-            const permission = this.permissions.create(
-              taskId,
-              directScanPath,
-            );
+            const permission = this.permissions.create(taskId, directScanPath);
             this.pendingRuns.set(permission.id, pending);
             this.tasks.setStatus(taskId, 'waiting_permission');
             this.events.emit(taskId, 'permission_required', { permission });
@@ -627,10 +679,10 @@ export class AgentService {
     // scope). Infer that scope from the user's own words instead of forcing
     // an unnecessary permission prompt and an unnecessarily broad search.
     if (root === undefined && !forcedEverywhereBySpecialFolder) {
-      const scope = this.resolveNamedWorkspaceScope(
-        lastUserMessage,
-        workspacePath,
-      );
+      const explicitRoot = this.resolveExplicitWindowsPath(lastUserMessage);
+      const scope = explicitRoot
+        ? { path: explicitRoot }
+        : this.resolveNamedWorkspaceScope(lastUserMessage, workspacePath);
       if (scope) {
         root = scope.path;
         // The model sometimes puts the *folder name itself* in queries
@@ -680,12 +732,13 @@ export class AgentService {
     const toolArgs: SearchFilesArgs = {
       queries,
       root,
+      ...(rawArgs.fuzzy === true ? { fuzzy: true } : {}),
       ...(extensions.length > 0 ? { extensions } : {}),
       maxResults,
       maxDepth:
         typeof rawArgs.maxDepth === 'number' ? rawArgs.maxDepth : undefined,
-      modifiedAfter,
-      modifiedBefore,
+      ...(modifiedAfter !== undefined ? { modifiedAfter } : {}),
+      ...(modifiedBefore !== undefined ? { modifiedBefore } : {}),
     };
 
     if (root === undefined) {
@@ -763,6 +816,18 @@ export class AgentService {
         content: modelToolContent,
       },
     ];
+    if (!toolFailed && pending.toolName === 'search_files') {
+      const matches = (result as { matches?: unknown[] } | null)?.matches;
+      if (Array.isArray(matches)) {
+        nextMessages.push({
+          role: 'system',
+          content:
+            matches.length > 0
+              ? `SEARCH EVIDENCE: search_files returned ${matches.length} real filename match(es). Do not say that no files were found. Present them as files whose names may be relevant, and do not claim their contents are relevant unless read_file was used.`
+              : 'SEARCH EVIDENCE: search_files returned zero filename matches for the queries and scope shown in the tool result. You may say no matching filenames were found in that verified scope, but do not claim the files do not exist outside it.',
+        });
+      }
+    }
     // A literal-substring search_files query for a Thai compound word (e.g.
     // "หนี้สิน") finds nothing when the real filename only contains one root
     // of it (e.g. "เก็บเงินเครียหนี้.gsheet" has "หนี้" but not "หนี้สิน") -
@@ -918,6 +983,15 @@ export class AgentService {
       linkedPaths.add(path);
     }
 
+    // The model sometimes emits the correct application URL itself. Treat a
+    // URL derived from this turn's trusted tool result as already linked so
+    // the bare-name pass does not create a nested Markdown link.
+    for (const path of pathsByLength) {
+      if (result.includes(`](${this.fileOpenUrl(path)})`)) {
+        linkedPaths.add(path);
+      }
+    }
+
     const nameCounts = new Map<string, number>();
     for (const name of files.values()) {
       nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
@@ -937,18 +1011,42 @@ export class AgentService {
       // and a Markdown link *inside* a code span renders as literal text,
       // not a clickable link, so those backticks have to go.
       const pattern = new RegExp(
-        `\`?(?<![\\w.\\\\/:-])${escapedName}(?![\\w.\\\\/:-])\`?`,
+        `\`?(?<![\\w.\\\\/:-])(?<!\\[)${escapedName}(?!\\]\\()(?![\\w.\\\\/:-])\`?`,
         'g',
       );
       if (!pattern.test(result)) continue;
       result = result.replace(pattern, `[${name}](${this.fileOpenUrl(path)})`);
+      linkedPaths.add(path);
     }
 
-    return result;
+    return this.appendLinkedPathLines(result, linkedPaths);
   }
 
   private fileOpenUrl(path: string): string {
     return `${this.filesApiBaseUrl}/open?path=${encodeURIComponent(path)}`;
+  }
+
+  private appendLinkedPathLines(
+    content: string,
+    linkedPaths: Set<string>,
+  ): string {
+    const lines = content.split('\n');
+    for (const path of linkedPaths) {
+      const url = this.fileOpenUrl(path);
+      const lineIndex = lines.findIndex((line) => line.includes(`](${url})`));
+      if (lineIndex >= 0) {
+        // If the model used the absolute path as the value of a location
+        // field, linkification turns that value into the filename. Remove the
+        // now-misleading location label before adding the real path below.
+        // This keeps the UI as two unambiguous lines: filename, then path.
+        lines[lineIndex] = lines[lineIndex].replace(
+          /^(\s*(?:[-*+]\s+)?)(?:(?:\*\*|__)?(?:ตำแหน่ง|location|path)(?:\*\*|__)?\s*:\s*)(?=\[)/iu,
+          '$1',
+        );
+        lines.splice(lineIndex + 1, 0, `ตำแหน่ง: \`${path}\``);
+      }
+    }
+    return lines.join('\n');
   }
 
   private resolveModifiedRange(modifiedRange: unknown): {
@@ -1011,10 +1109,7 @@ export class AgentService {
     ].slice(0, 20);
   }
 
-  private isExtensionOnlyQuery(
-    query: string,
-    extensions: string[],
-  ): boolean {
+  private isExtensionOnlyQuery(query: string, extensions: string[]): boolean {
     if (extensions.length === 0) return false;
     const cleaned = query
       .trim()
@@ -1063,6 +1158,31 @@ export class AgentService {
     return undefined;
   }
 
+  /**
+   * Recovers an explicit Windows absolute path from a direct directory-list
+   * request when the local model ignored the tool twice. This enters the same
+   * permission flow as a model-produced tool call instead of misleadingly
+   * asking the user to make an already-clear path more specific.
+   */
+  private resolveDirectAbsolutePathScan(
+    text: string | undefined,
+  ): string | undefined {
+    if (!text || !DIRECTORY_LIST_INTENT.test(text)) return undefined;
+    return this.resolveExplicitWindowsPath(text);
+  }
+
+  private resolveExplicitWindowsPath(
+    text: string | undefined,
+  ): string | undefined {
+    if (!text) return undefined;
+    const match = text.match(
+      /[a-zA-Z]:\\[^\r\n"']*?(?=\s+(?:ช่วย|ให้|หน่อย|ที|โดย|พร้อม|please\b|and\b)|[,.!?]|$)/i,
+    );
+    const path = match?.[0].trim();
+    if (!path) return undefined;
+    return /^[a-zA-Z]:\\$/.test(path) ? path : path.replace(/[\\/]+$/, '');
+  }
+
   private expandSpecialFolderQueries(queries: string[]): string[] {
     const additions = queries
       .map((query) => SPECIAL_FOLDER_TRANSLATIONS[query.trim()])
@@ -1071,6 +1191,36 @@ export class AgentService {
           !!translated && !queries.includes(translated),
       );
     return additions.length ? [...queries, ...new Set(additions)] : queries;
+  }
+
+  /**
+   * Adds a small number of boundary fragments for continuous-script compound
+   * words. This is vocabulary-free: it helps a plan containing a compound
+   * match filenames that use only one constituent without maintaining a
+   * finance/legal/medical synonym table. ASCII identifiers are deliberately
+   * left intact, and the MCP tool's 20-query ceiling is enforced here.
+   */
+  private expandPlannedQueries(queries: string[]): string[] {
+    const originals = [...new Set(queries.map((query) => query.trim()))]
+      .filter(Boolean)
+      .slice(0, 12);
+    const fragments: string[] = [];
+    for (const query of originals) {
+      const hasNonAscii = Array.from(query).some(
+        (character) => (character.codePointAt(0) ?? 0) > 127,
+      );
+      if (!hasNonAscii || !/^[\p{L}\p{M}]+$/u.test(query)) {
+        continue;
+      }
+      const characters = Array.from(query.normalize('NFKC'));
+      const fragmentLength = Math.max(4, Math.ceil(characters.length / 2));
+      if (characters.length - fragmentLength < 2) continue;
+      fragments.push(
+        characters.slice(0, fragmentLength).join(''),
+        characters.slice(-fragmentLength).join(''),
+      );
+    }
+    return [...new Set([...originals, ...fragments])].slice(0, 20);
   }
 
   /**

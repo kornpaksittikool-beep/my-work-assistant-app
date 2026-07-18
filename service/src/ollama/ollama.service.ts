@@ -1,6 +1,7 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  FileSearchPlan,
   OllamaChatMessage,
   OllamaChatResult,
   OllamaToolCall,
@@ -9,6 +10,8 @@ import {
 interface OllamaResponse {
   message?: { content?: string; tool_calls?: OllamaToolCall[] };
 }
+
+const MAX_PLANNED_QUERIES = 12;
 
 @Injectable()
 export class OllamaService {
@@ -109,6 +112,74 @@ export class OllamaService {
     return { content, toolCalls };
   }
 
+  /**
+   * Turns a natural-language file topic into a small, language-agnostic set
+   * of filename queries. This is intentionally a separate constrained call:
+   * the normal chat model no longer has to choose a tool and invent useful
+   * synonyms in the same step. Returning null is a safe soft failure; the
+   * regular tool-calling flow remains available as a fallback.
+   */
+  async planFileSearch(userText: string): Promise<FileSearchPlan | null> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          model: this.model,
+          stream: false,
+          format: {
+            type: 'object',
+            required: ['queries', 'fuzzy'],
+            properties: {
+              queries: {
+                type: 'array',
+                minItems: 1,
+                maxItems: MAX_PLANNED_QUERIES,
+                items: { type: 'string' },
+              },
+              fuzzy: { type: 'boolean' },
+            },
+          },
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Create a filename-search plan from the user request. Return JSON only. Generate short literal substrings that could realistically occur in filenames. Include the important original term plus useful roots, synonyms, common translations, abbreviations, and likely spelling corrections inferred from context. Preserve exact identifiers, codes, and quoted filenames. Do not invent paths. Do not include conversational filler. Keep at most 12 unique queries. Set fuzzy=true when spelling may be uncertain or the request is topic-based.',
+            },
+            { role: 'user', content: userText },
+          ],
+          options: { num_ctx: Math.min(this.numCtx, 4096), temperature: 0 },
+        }),
+      });
+    } catch {
+      return null;
+    }
+    if (!response.ok) return null;
+
+    try {
+      const body = (await response.json()) as OllamaResponse;
+      const parsed = JSON.parse(body.message?.content ?? '') as {
+        queries?: unknown;
+        fuzzy?: unknown;
+      };
+      if (!Array.isArray(parsed.queries)) return null;
+      const queries = [
+        ...new Set(
+          parsed.queries
+            .filter((query): query is string => typeof query === 'string')
+            .map((query) => query.trim())
+            .filter((query) => query.length > 0 && query.length <= 100),
+        ),
+      ].slice(0, MAX_PLANNED_QUERIES);
+      if (queries.length === 0) return null;
+      return { queries, fuzzy: parsed.fuzzy === true };
+    } catch {
+      return null;
+    }
+  }
+
   private scanDirectoryTool(): Record<string, unknown> {
     return {
       type: 'function',
@@ -146,6 +217,11 @@ export class OllamaService {
               type: 'string',
               description:
                 'Optional absolute path to restrict the search to. Omit to search every allowed root.',
+            },
+            fuzzy: {
+              type: 'boolean',
+              description:
+                'Enable conservative typo-tolerant filename matching. Useful when the user is unsure of the spelling.',
             },
             extensions: {
               type: 'array',

@@ -23,6 +23,12 @@ function mockStreamResponse(lines: unknown[]) {
   };
 }
 
+function parseFetchBody(call: unknown[]): Record<string, unknown> {
+  const body = (call[1] as RequestInit | undefined)?.body;
+  if (typeof body !== 'string') throw new Error('Expected a JSON request body');
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
 describe('OllamaService', () => {
   const originalFetch = global.fetch;
 
@@ -68,6 +74,51 @@ describe('OllamaService', () => {
     });
   });
 
+  describe('planFileSearch', () => {
+    it('returns a sanitized dynamic search plan from structured JSON', async () => {
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            message: {
+              content: JSON.stringify({
+                queries: [' finance ', 'budget', 'finance', 123],
+                fuzzy: true,
+              }),
+            },
+          }),
+      });
+      global.fetch = fetchMock;
+
+      await expect(
+        createService().planFileSearch('find files related to finance'),
+      ).resolves.toEqual({ queries: ['finance', 'budget'], fuzzy: true });
+
+      const body = parseFetchBody((fetchMock.mock.calls as unknown[][])[0]) as {
+        stream: boolean;
+        format: { type: string };
+        tools?: unknown;
+      };
+      expect(body.stream).toBe(false);
+      expect(body.format.type).toBe('object');
+      expect(body.tools).toBeUndefined();
+    });
+
+    it('returns null when planning is unavailable or malformed', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ message: { content: 'not-json' } }),
+        });
+      const service = createService();
+
+      await expect(service.planFileSearch('first')).resolves.toBeNull();
+      await expect(service.planFileSearch('second')).resolves.toBeNull();
+    });
+  });
+
   describe('chat', () => {
     it('returns content and tool calls from a successful response', async () => {
       global.fetch = jest.fn().mockResolvedValue(
@@ -110,7 +161,8 @@ describe('OllamaService', () => {
       global.fetch = fetchMock;
 
       await createService().chat([{ role: 'user', content: 'hi' }]);
-      let body = JSON.parse(fetchMock.mock.calls[0][1].body) as {
+      const calls = fetchMock.mock.calls as unknown[][];
+      let body = parseFetchBody(calls[0]) as {
         options: { num_ctx: number };
       };
       expect(body.options).toEqual({ num_ctx: 8192 });
@@ -118,7 +170,7 @@ describe('OllamaService', () => {
       await createService({ OLLAMA_NUM_CTX: 16384 }).chat([
         { role: 'user', content: 'hi' },
       ]);
-      body = JSON.parse(fetchMock.mock.calls[1][1].body) as {
+      body = parseFetchBody(calls[1]) as {
         options: { num_ctx: number };
       };
       expect(body.options).toEqual({ num_ctx: 16384 });
@@ -172,7 +224,9 @@ describe('OllamaService', () => {
       });
       const service = createService();
 
-      await expect(service.chat([])).rejects.toThrow('Ollama returned HTTP 500');
+      await expect(service.chat([])).rejects.toThrow(
+        'Ollama returned HTTP 500',
+      );
     });
 
     it('handles a failed attempt to read the HTTP error body', async () => {

@@ -12,3 +12,10 @@ export interface OllamaChatResult {
   content: string;
   toolCalls: OllamaToolCall[];
 }
+
+export interface FileSearchPlan {
+  /** Short filename substrings generated dynamically from the user's intent. */
+  queries: string[];
+  /** Whether approximate filename matching is useful for this request. */
+  fuzzy: boolean;
+}
