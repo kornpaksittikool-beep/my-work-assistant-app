@@ -690,24 +690,28 @@ describe('AgentService', () => {
     });
   });
 
-  it('marks the task failed when the tool call throws after permission is resumed', async () => {
-    const { agent, tasks, events, ollama, mcp, permissions, task } =
-      createAgent();
-    (ollama.chat as jest.Mock).mockResolvedValue({
-      content: '',
-      toolCalls: [
-        {
-          function: {
-            name: 'scan_directory',
-            arguments: { path: 'C:\\Windows' },
+  it('feeds a tool call failure back as a tool result instead of failing the whole task, once permission is resumed', async () => {
+    const { agent, tasks, ollama, mcp, permissions, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'C:\\Windows\\NonexistentFolder' },
+            },
           },
-        },
-      ],
-    });
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: 'ไม่พบโฟลเดอร์ที่ระบุครับ',
+        toolCalls: [],
+      });
     (permissions.create as jest.Mock).mockReturnValue({
       id: 'perm-5',
       taskId: task.id,
-      path: 'C:\\Windows',
+      path: 'C:\\Windows\\NonexistentFolder',
       action: 'read_directory',
       access: 'read',
       status: 'pending',
@@ -723,7 +727,7 @@ describe('AgentService', () => {
       status: 'allowed',
     });
     (mcp.scanDirectory as jest.Mock).mockRejectedValue(
-      new Error('disk unreadable'),
+      new Error('Path does not exist: C:\\Windows\\NonexistentFolder'),
     );
 
     agent.start(task.id, 'scan outside');
@@ -732,34 +736,56 @@ describe('AgentService', () => {
     agent.resolvePermission(task.id, 'perm-5', true);
     await flush();
 
-    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
-    expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
-      message: 'disk unreadable',
-    });
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'tool',
+      JSON.stringify({
+        error: 'Path does not exist: C:\\Windows\\NonexistentFolder',
+      }),
+      'scan_directory',
+    );
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'ไม่พบโฟลเดอร์ที่ระบุครับ',
+      undefined,
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'scan_directory ไม่สำเร็จ',
+          state: 'failed',
+        }),
+      ]),
+    );
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
   });
 
-  it('stringifies a non-Error thrown value when marking the task failed', async () => {
-    const { agent, tasks, events, ollama, mcp, task } = createAgent();
-    (ollama.chat as jest.Mock).mockResolvedValue({
-      content: '',
-      toolCalls: [
-        {
-          function: {
-            name: 'scan_directory',
-            arguments: { path: task.workspacePath },
+  it('stringifies a non-Error thrown value in the tool result fed back to the model', async () => {
+    const { agent, tasks, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: task.workspacePath },
+            },
           },
-        },
-      ],
-    });
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'เกิดข้อผิดพลาดครับ', toolCalls: [] });
     (mcp.scanDirectory as jest.Mock).mockRejectedValue('boom-string');
 
     agent.start(task.id, 'scan');
     await flush();
 
-    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'failed');
-    expect(events.emit).toHaveBeenCalledWith(task.id, 'error', {
-      message: 'boom-string',
-    });
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'tool',
+      JSON.stringify({ error: 'boom-string' }),
+      'scan_directory',
+    );
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
   });
 
   describe('search_files', () => {

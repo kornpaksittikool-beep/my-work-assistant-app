@@ -267,7 +267,7 @@ export class AgentService {
     const messages: OllamaChatMessage[] = [
       {
         role: 'system',
-        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. When the user asks about files by time (e.g. "อาทิตย์ที่แล้ว"/last week, "เดือนที่แล้ว"/last month, "เมื่อวาน"/yesterday, "วันนี้"/today), set search_files.modifiedRange to the closest bucket (today, yesterday, last_7_days, last_30_days, or last_90_days) instead of trying to compute exact dates yourself — you don't reliably know today's date or do date arithmetic, the bucket boundaries are computed for you. Combine modifiedRange with queries to filter a name search by time, or give modifiedRange alone (omitting queries) to list everything changed in that window regardless of name. This machine's Windows special folders are at these exact fixed paths, listed as Thai name(s) (English name) = path: ${SPECIAL_FOLDER_PROMPT_SEGMENT}. When the user wants to see what is inside one of these (e.g. "ดูในดาวน์โหลดมีอะไรบ้าง"), call scan_directory directly with that exact path — never guess a different path for it (e.g. assuming it sits inside the active workspace), and don't use search_files for this, since search_files only returns items found *inside* the folders it walks and can never return one of the walked folders itself, so it can't answer "what's in Downloads" even when scoped correctly. Only use search_files with one of these folders when the user is looking for a specific file that might be inside it by name; in that case still pass both the Thai term and the real English folder name as separate query items (e.g. queries: ["ดาวโหลด", "Downloads"]) and omit "root" so it searches every allowed location — the folder on disk is always named in English regardless of the OS display language, so a Thai-only query would never match it since matching is a literal substring, not a translation. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. The \`size\` field in every tool result is always in bytes (ไบต์) — never call it บิต (bits), and convert to KB/MB yourself using 1024 bytes per KB when that reads better. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
+        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. When the user asks about files by time (e.g. "อาทิตย์ที่แล้ว"/last week, "เดือนที่แล้ว"/last month, "เมื่อวาน"/yesterday, "วันนี้"/today), set search_files.modifiedRange to the closest bucket (today, yesterday, last_7_days, last_30_days, or last_90_days) instead of trying to compute exact dates yourself — you don't reliably know today's date or do date arithmetic, the bucket boundaries are computed for you. Combine modifiedRange with queries to filter a name search by time, or give modifiedRange alone (omitting queries) to list everything changed in that window regardless of name. This machine's Windows special folders are at these exact fixed paths, listed as Thai name(s) (English name) = path: ${SPECIAL_FOLDER_PROMPT_SEGMENT}. When the user wants to see what is inside one of these (e.g. "ดูในดาวน์โหลดมีอะไรบ้าง"), call scan_directory directly with that exact path — never guess a different path for it (e.g. assuming it sits inside the active workspace), and don't use search_files for this, since search_files only returns items found *inside* the folders it walks and can never return one of the walked folders itself, so it can't answer "what's in Downloads" even when scoped correctly. Only use search_files with one of these folders when the user is looking for a specific file that might be inside it by name; in that case still pass both the Thai term and the real English folder name as separate query items (e.g. queries: ["ดาวโหลด", "Downloads"]) and omit "root" so it searches every allowed location — the folder on disk is always named in English regardless of the OS display language, so a Thai-only query would never match it since matching is a literal substring, not a translation. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. The \`size\` field in every tool result is always in bytes (ไบต์) — never call it บิต (bits), and convert to KB/MB yourself using 1024 bytes per KB when that reads better. A tool result shaped as \`{"error": "..."}\` instead of the normal fields means that call failed — most often because the path/project you asked about doesn't actually exist on this machine. Never invent a path that pattern-matches an earlier real result (e.g. don't assume every project lives at "workspace\\<name>" just because one you already found did) — when a name doesn't match anything, say so plainly and suggest searching everywhere (omit root) instead of guessing another path. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
       },
       ...task.messages
         .filter((message) => message.role !== 'tool')
@@ -540,10 +540,29 @@ export class AgentService {
       tool: pending.toolName,
       path: pending.displayPath,
     });
-    const result =
-      pending.toolName === 'scan_directory'
-        ? await this.mcp.scanDirectory(pending.toolArgs.path)
-        : await this.mcp.searchFiles(pending.toolArgs);
+    // The model can hallucinate a plausible-looking absolute root that
+    // doesn't actually exist (observed directly: after two real results
+    // under D:\my-work\<project>, it pattern-matched that shape for a
+    // project name that was never real, e.g. D:\my-work\notification-service)
+    // - PathGuardService in 1-scan-file then throws for a nonexistent path.
+    // Previously that exception propagated all the way up to fail() and
+    // killed the whole task with a raw technical error and no chat reply at
+    // all. Feed it back as a tool result instead, same as a real one, so the
+    // model gets a turn to explain it to the user (or try again some other
+    // way) instead of the conversation just dying.
+    let result: unknown;
+    let toolFailed = false;
+    try {
+      result =
+        pending.toolName === 'scan_directory'
+          ? await this.mcp.scanDirectory(pending.toolArgs.path)
+          : await this.mcp.searchFiles(pending.toolArgs);
+    } catch (error) {
+      toolFailed = true;
+      result = {
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     const toolContent = JSON.stringify(result);
     this.tasks.addMessage(task.id, 'tool', toolContent, pending.toolName);
     this.events.emit(task.id, 'tool_completed', {
@@ -553,9 +572,10 @@ export class AgentService {
     });
     this.recordActivity(
       task.id,
-      `${pending.toolName} เสร็จแล้ว`,
-      'เสร็จสิ้น',
+      `${pending.toolName} ${toolFailed ? 'ไม่สำเร็จ' : 'เสร็จแล้ว'}`,
+      toolFailed ? 'ไม่สำเร็จ' : 'เสร็จสิ้น',
       'tool',
+      toolFailed ? 'failed' : 'done',
     );
     const nextMessages: OllamaChatMessage[] = [
       ...pending.messages,
@@ -595,9 +615,10 @@ export class AgentService {
     label: string,
     detail: string,
     kind: 'tool' | 'permission',
+    state: 'done' | 'failed' = 'done',
   ): void {
     const list = this.toolActivity.get(taskId) ?? [];
-    list.push({ id: randomUUID(), label, detail, state: 'done', kind });
+    list.push({ id: randomUUID(), label, detail, state, kind });
     this.toolActivity.set(taskId, list);
   }
 
