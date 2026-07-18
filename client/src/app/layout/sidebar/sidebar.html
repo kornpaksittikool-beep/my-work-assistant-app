@@ -28,20 +28,35 @@
   @if (!store.sidebarCollapsed()) {
     <nav class="flex-1 overflow-y-auto [scrollbar-width:thin] max-[900px]:hidden" aria-label="รายการงาน">
       <p class="mx-2.5 mt-[9px] mb-2 text-[13px] text-muted">งานของฉัน</p>
-      @for (task of store.tasks(); track task.id) {
-        <button
-          class="relative flex min-h-14 w-full cursor-pointer items-center gap-2.5 rounded-[7px] border-0 bg-transparent px-2.5 py-2 text-left text-muted hover:bg-surface-2 hover:text-content"
+      <input
+        class="mb-2 w-full rounded-md border border-edge bg-surface-2 px-2.5 py-1.5 text-xs text-content outline-none placeholder:text-faint focus:border-accent"
+        type="search"
+        placeholder="ค้นหางาน..."
+        [value]="searchText()"
+        (input)="searchText.set($any($event.target).value)"
+      />
+      @for (task of filteredTasks(); track task.id) {
+        <div
+          class="group relative flex min-h-14 w-full cursor-pointer items-center gap-2.5 rounded-[7px] border-0 bg-transparent px-2.5 py-2 text-left text-muted hover:bg-surface-2 hover:text-content"
           [class]="store.activeTaskId() === task.id ? 'bg-surface-2 text-content shadow-[inset_2px_0_0_#6170f3]' : ''"
-          type="button"
+          role="button"
+          tabindex="0"
           (click)="store.selectTask(task.id)"
+          (keydown.enter)="store.selectTask(task.id)"
+          (keydown.space)="$event.preventDefault(); store.selectTask(task.id)"
         >
           <span class="size-2 shrink-0 rounded-full" [class]="task.status === 'working' ? 'bg-accent shadow-[0_0_0_3px_rgba(97,112,243,.15)]' : 'bg-faint'"></span>
           <span class="grid min-w-0 gap-0.5">
             <strong class="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium">{{ task.title }}</strong>
             <small class="text-[11px]" [class]="store.activeTaskId() === task.id ? 'text-[#8994ff]' : 'text-faint'">{{ store.statusLabel(task.status) }}</small>
           </span>
-          <time class="ml-auto text-[11px] text-faint">{{ task.updatedAt.slice(11, 16) }}</time>
-        </button>
+          <time class="ml-auto text-[11px] text-faint group-hover:hidden group-focus-within:hidden">{{ formatLocalTime(task.updatedAt) }}</time>
+          <span class="ml-auto hidden items-center gap-1 group-hover:flex group-focus-within:flex">
+            <button class="cursor-pointer border-0 bg-transparent p-1 text-faint hover:text-content" type="button" title="เปลี่ยนชื่อ" aria-label="เปลี่ยนชื่อ" (click)="renameTask($event, task.id, task.title)">✎</button>
+            <button class="cursor-pointer border-0 bg-transparent p-1 text-faint hover:text-content" type="button" title="เก็บเข้าคลัง" aria-label="เก็บเข้าคลัง" (click)="archiveTask($event, task.id)">▣</button>
+            <button class="cursor-pointer border-0 bg-transparent p-1 text-faint hover:text-danger" type="button" title="ลบ" aria-label="ลบงาน" (click)="deleteTask($event, task.id, task.title)">×</button>
+          </span>
+        </div>
       }
     </nav>
 

@@ -138,6 +138,29 @@ export class AssistantStore {
     this.api.stopTask(task.id).subscribe({ next: ({ data }) => this.upsertTask(data), error: () => this.handleError('หยุด task ไม่สำเร็จ') });
   }
 
+  renameTask(id: string, title: string): void {
+    const normalized = title.trim();
+    if (!normalized) return;
+    this.api.updateTask(id, { title: normalized }).subscribe({
+      next: ({ data }) => this.upsertTask(data),
+      error: () => this.handleError('เปลี่ยนชื่องานไม่สำเร็จ'),
+    });
+  }
+
+  archiveTask(id: string): void {
+    this.api.updateTask(id, { archived: true }).subscribe({
+      next: () => this.removeTaskFromList(id),
+      error: () => this.handleError('เก็บงานเข้าคลังไม่สำเร็จ'),
+    });
+  }
+
+  deleteTask(id: string): void {
+    this.api.deleteTask(id).subscribe({
+      next: () => this.removeTaskFromList(id),
+      error: () => this.handleError('ลบงานไม่สำเร็จ'),
+    });
+  }
+
   statusLabel(status: TaskStatus): string {
     return ({ idle: 'พร้อมเริ่ม', working: 'กำลังทำงาน', waiting_permission: 'รอการอนุญาต', completed: 'เสร็จแล้ว', stopped: 'หยุดแล้ว', failed: 'เกิดข้อผิดพลาด' })[status];
   }
@@ -161,8 +184,20 @@ export class AssistantStore {
       // text already streamed for the turn being restarted is stale, so
       // clear it rather than let the next attempt's deltas appear appended
       // after it.
-      if (status === 'working') { this.startWorkTimer(); this.clearStreamingText(); }
-      else if (status === 'completed' || status === 'stopped' || status === 'failed') this.stopWorkTimer();
+      if (status === 'working') {
+        // A replayed permission_required event may arrive first when the SSE
+        // stream reconnects. A newer working status means that request was
+        // already allowed, so it must not remain visible as pending.
+        this.pendingPermission.set(null);
+        this.startWorkTimer();
+        this.clearStreamingText();
+      } else if (status === 'completed' || status === 'stopped' || status === 'failed') {
+        // ReplaySubject deliberately replays recent events after a reload.
+        // Terminal task state is newer than any replayed permission request,
+        // so clear the stale card instead of asking for the same decision again.
+        this.pendingPermission.set(null);
+        this.stopWorkTimer();
+      }
     } else if (event.type === 'message_delta') {
       this.queueStreamDelta(String(payload['delta'] ?? ''));
     } else if (event.type === 'tool_started') {
@@ -253,6 +288,14 @@ export class AssistantStore {
   private removeMessage(id: string): void {
     const task = this.activeTask();
     if (task) this.patchActiveTask({ ...task, messages: task.messages.filter((message) => message.id !== id) });
+  }
+  private removeTaskFromList(id: string): void {
+    const remaining = this.tasks().filter((task) => task.id !== id);
+    this.tasks.set(remaining);
+    if (this.activeTaskId() === id) {
+      if (remaining.length > 0) this.selectTask(remaining[0].id);
+      else this.newTask();
+    }
   }
   private addActivity(id: string, label: string, detail: string, state: ActivityItem['state']): void {
     if (this.activities().some((activity) => activity.id === id)) return;

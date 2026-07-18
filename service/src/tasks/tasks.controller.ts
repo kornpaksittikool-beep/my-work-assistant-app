@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   MessageEvent,
   Param,
+  Patch,
   Post,
   Sse,
 } from '@nestjs/common';
@@ -19,6 +21,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { TaskEventsService } from './task-events.service';
+import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksRepository } from './tasks.repository';
 import type { AssistantTask } from './task.types';
 
@@ -59,6 +62,29 @@ export class TasksController {
   })
   findOne(@Param('id') id: string): AssistantTask {
     return this.tasks.findOne(id);
+  }
+
+  @Patch(':id')
+  @ApiEndpoint({
+    summary: 'Update a task title or archive state',
+    type: TaskResponseDto,
+    extraErrors: [404],
+  })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTaskDto,
+  ): AssistantTask {
+    return this.tasks.update(id, dto);
+  }
+
+  @Delete(':id')
+  @ApiEndpoint({
+    summary: 'Delete a task',
+    type: TaskResponseDto,
+    extraErrors: [404],
+  })
+  remove(@Param('id') id: string): AssistantTask {
+    return this.tasks.remove(id);
   }
 
   @Post(':id/messages')

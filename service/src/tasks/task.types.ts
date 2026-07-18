@@ -41,6 +41,7 @@ export interface AssistantTask {
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
+  archived?: boolean;
 }
 
 export interface AgentEventData {

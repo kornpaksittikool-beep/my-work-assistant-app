@@ -11,8 +11,16 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { TaskEventsService } from '../tasks/task-events.service';
 import { TasksRepository } from '../tasks/tasks.repository';
 import { ToolActivityEntry } from '../tasks/task.types';
+import {
+  DIRECTORY_LIST_INTENT,
+  evaluateToolPolicy,
+  FILE_CONTENT_UNAVAILABLE_RESPONSE,
+  FILE_METADATA_POLICY_PROMPT,
+  UNVERIFIED_FILE_RESPONSE,
+} from './tool-policy';
+import { formatToolResultForModel } from './file-metadata-format';
 
-type ToolName = 'scan_directory' | 'search_files';
+type ToolName = 'scan_directory' | 'search_files' | 'read_file';
 
 /** Display path shown in the permission prompt when search_files omits `root` and therefore spans every SCAN_ALLOWED_ROOTS entry at once. */
 export const SEARCH_EVERYWHERE_LABEL =
@@ -49,7 +57,7 @@ const SPECIAL_FOLDER_TRANSLATIONS: Record<string, string> = {
  */
 const MODIFIED_RANGE_DAYS: Record<string, number> = {
   today: 1,
-  yesterday: 2,
+  yesterday: 1,
   last_7_days: 7,
   last_30_days: 30,
   last_90_days: 90,
@@ -84,16 +92,15 @@ const SPECIAL_FOLDER_NAMES = new Set([
  * e.g. "delete this file" should still get refused outright rather than
  * forced into a pointless retry.
  */
-const LOOKUP_INTENT_PATTERN =
-  /ไฟล์|โฟลเดอร์|เอกสาร|หา|ค้นหา|ดู|สแกน|มีอะไร|อยู่ที่ไหน|\bfile\b|\bfolder\b|\bdirectory\b|\bfind\b|\bsearch\b|\bscan\b|\blist\b|\bshow\b/i;
-const MUTATION_INTENT_PATTERN =
-  /ลบ|แก้ไข|เปลี่ยน|สร้าง|ย้าย|คัดลอก|เขียน|บันทึก|\bdelete\b|\bremove\b|\bedit\b|\bmodify\b|\bwrite\b|\bcreate\b|\brename\b|\bmove\b|\bcopy\b/i;
 
 /** Matches the user referring to the active workspace itself by a generic
  * phrase rather than naming one of its subfolders - see
  * resolveNamedWorkspaceScope(). */
 const WORKSPACE_SELF_REFERENCE_PATTERN =
   /โปรเจกต์นี้|โฟลเดอร์นี้|ในนี้|this project|this folder|this workspace/i;
+
+/** A direct request to list/scan a known folder can be recovered
+ * deterministically if the local model ignores the tool nudge twice. */
 
 /**
  * Absolute path for each special folder on this machine, computed from the
@@ -148,6 +155,14 @@ type PendingToolRun =
       displayPath: string;
       messages: OllamaChatMessage[];
       stepNumber: number;
+    }
+  | {
+      taskId: string;
+      toolName: 'read_file';
+      toolArgs: { path: string; maxBytes?: number };
+      displayPath: string;
+      messages: OllamaChatMessage[];
+      stepNumber: number;
     };
 
 type ResolvedTarget =
@@ -160,6 +175,12 @@ type ResolvedTarget =
   | {
       toolName: 'search_files';
       toolArgs: SearchFilesArgs;
+      displayPath: string;
+      requiresPermission: boolean;
+    }
+  | {
+      toolName: 'read_file';
+      toolArgs: { path: string; maxBytes?: number };
       displayPath: string;
       requiresPermission: boolean;
     };
@@ -264,7 +285,13 @@ export class AgentService {
 
   private async run(taskId: string): Promise<void> {
     const task = this.tasks.findOne(taskId);
+    const currentLocalDate = this.currentLocalDate();
     const messages: OllamaChatMessage[] = [
+      {
+        role: 'system',
+        content: `The server's current local date is ${currentLocalDate}. Never claim that this date is in the future. If the user writes this exact date in a file modification-time lookup, treat it as today and use search_files.modifiedRange="today".`,
+      },
+      { role: 'system', content: FILE_METADATA_POLICY_PROMPT },
       {
         role: 'system',
         content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. When the user asks about files by time (e.g. "อาทิตย์ที่แล้ว"/last week, "เดือนที่แล้ว"/last month, "เมื่อวาน"/yesterday, "วันนี้"/today), set search_files.modifiedRange to the closest bucket (today, yesterday, last_7_days, last_30_days, or last_90_days) instead of trying to compute exact dates yourself — you don't reliably know today's date or do date arithmetic, the bucket boundaries are computed for you. Combine modifiedRange with queries to filter a name search by time, or give modifiedRange alone (omitting queries) to list everything changed in that window regardless of name. This machine's Windows special folders are at these exact fixed paths, listed as Thai name(s) (English name) = path: ${SPECIAL_FOLDER_PROMPT_SEGMENT}. When the user wants to see what is inside one of these (e.g. "ดูในดาวน์โหลดมีอะไรบ้าง"), call scan_directory directly with that exact path — never guess a different path for it (e.g. assuming it sits inside the active workspace), and don't use search_files for this, since search_files only returns items found *inside* the folders it walks and can never return one of the walked folders itself, so it can't answer "what's in Downloads" even when scoped correctly. Only use search_files with one of these folders when the user is looking for a specific file that might be inside it by name; in that case still pass both the Thai term and the real English folder name as separate query items (e.g. queries: ["ดาวโหลด", "Downloads"]) and omit "root" so it searches every allowed location — the folder on disk is always named in English regardless of the OS display language, so a Thai-only query would never match it since matching is a literal substring, not a translation. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. The \`size\` field in every tool result is always in bytes (ไบต์) — never call it บิต (bits), and convert to KB/MB yourself using 1024 bytes per KB when that reads better. A tool result shaped as \`{"error": "..."}\` instead of the normal fields means that call failed — most often because the path/project you asked about doesn't actually exist on this machine. Never invent a path that pattern-matches an earlier real result (e.g. don't assume every project lives at "workspace\\<name>" just because one you already found did) — when a name doesn't match anything, say so plainly and suggest searching everywhere (omit root) instead of guessing another path. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
@@ -294,7 +321,8 @@ export class AgentService {
     const call = result.toolCalls.find(
       (item) =>
         item.function.name === 'scan_directory' ||
-        item.function.name === 'search_files',
+        item.function.name === 'search_files' ||
+        item.function.name === 'read_file',
     );
 
     if (!call) {
@@ -305,10 +333,57 @@ export class AgentService {
         });
         const nudge: OllamaChatMessage = {
           role: 'system',
-          content: `คุณตอบคำถามล่าสุดโดยไม่ได้เรียก scan_directory หรือ search_files เลย ห้ามสรุปว่า "ไม่พบ" หรือ "ไม่มีสิทธิ์เข้าถึง" ก่อนเรียกเครื่องมือที่เกี่ยวข้องจริงเสมอ ถ้าชื่อโฟลเดอร์ที่ผู้ใช้พูดถึงเป็นชื่อสั้น ๆ ไม่ใช่ absolute path (เช่น "assistant-app") ให้ต่อกับ workspace path ที่รู้อยู่แล้ว (${task.workspacePath}) ให้เป็น absolute path เองก่อนเรียก scan_directory ตอนนี้เรียกเครื่องมือที่เหมาะสมแล้วตอบคำถามล่าสุดของผู้ใช้ใหม่อีกครั้ง`,
+          content: `คุณตอบคำถามล่าสุดโดยไม่ได้เรียกเครื่องมือไฟล์เลย ต้องเรียก scan_directory, search_files หรือ read_file ที่เหมาะสมก่อนตอบเสมอ หากผู้ใช้ขออ่านหรือสรุปเนื้อหา ต้องใช้ read_file กับ exact path ก่อน ถ้าชื่อโฟลเดอร์ที่ผู้ใช้พูดถึงเป็นชื่อสั้น ๆ ให้ต่อกับ workspace path (${task.workspacePath}) เป็น absolute path ก่อนเรียกเครื่องมือ ตอนนี้เรียกเครื่องมือที่เหมาะสมแล้วตอบใหม่`,
         };
         await this.step(taskId, [...messages, nudge], stepNumber, true);
         return;
+      }
+      // A small local model can ignore even the explicit retry nudge and
+      // fabricate a directory listing. For known Windows folders, recover
+      // the real path from the user's words and enter the normal permission
+      // flow instead of accepting an unverified answer.
+      if (retriedNoTool) {
+        const directScanPath = this.resolveDirectSpecialFolderScan(
+          this.lastUserMessageText(messages),
+        );
+        if (directScanPath) {
+          const pending: PendingToolRun = {
+            taskId,
+            messages,
+            stepNumber,
+            toolName: 'scan_directory',
+            toolArgs: { path: directScanPath },
+            displayPath: directScanPath,
+          };
+          if (!this.isWithin(directScanPath, task.workspacePath)) {
+            const permission = this.permissions.create(
+              taskId,
+              directScanPath,
+            );
+            this.pendingRuns.set(permission.id, pending);
+            this.tasks.setStatus(taskId, 'waiting_permission');
+            this.events.emit(taskId, 'permission_required', { permission });
+            return;
+          }
+          await this.executeTool(pending);
+          return;
+        }
+        if (
+          evaluateToolPolicy(this.lastUserMessageText(messages) ?? '')
+            .requiresFileEvidence
+        ) {
+          const decision = evaluateToolPolicy(
+            this.lastUserMessageText(messages) ?? '',
+          );
+          this.complete(
+            taskId,
+            decision.requestsFileContent
+              ? FILE_CONTENT_UNAVAILABLE_RESPONSE
+              : UNVERIFIED_FILE_RESPONSE,
+            stepNumber,
+          );
+          return;
+        }
       }
       const content = this.linkifyFilePaths(
         result.content || 'ดำเนินการเสร็จแล้ว',
@@ -363,10 +438,7 @@ export class AgentService {
     if (usedRealTool) return false;
     const lastUserMessage = this.lastUserMessageText(messages);
     if (!lastUserMessage) return false;
-    return (
-      LOOKUP_INTENT_PATTERN.test(lastUserMessage) &&
-      !MUTATION_INTENT_PATTERN.test(lastUserMessage)
-    );
+    return evaluateToolPolicy(lastUserMessage).requiresFileEvidence;
   }
 
   private lastUserMessageText(
@@ -382,6 +454,18 @@ export class AgentService {
     workspacePath: string,
     lastUserMessage: string | undefined,
   ): ResolvedTarget {
+    if (toolName === 'read_file') {
+      const path =
+        typeof rawArgs.path === 'string' ? rawArgs.path : workspacePath;
+      const maxBytes =
+        typeof rawArgs.maxBytes === 'number' ? rawArgs.maxBytes : undefined;
+      return {
+        toolName: 'read_file',
+        toolArgs: { path, maxBytes },
+        displayPath: path,
+        requiresPermission: !this.isWithin(path, workspacePath),
+      };
+    }
     if (toolName === 'scan_directory') {
       const path =
         typeof rawArgs.path === 'string' ? rawArgs.path : workspacePath;
@@ -393,13 +477,21 @@ export class AgentService {
       };
     }
 
+    const extensions = this.resolveExtensions(
+      rawArgs.extensions,
+      lastUserMessage,
+    );
     const rawQueries = Array.isArray(rawArgs.queries)
       ? rawArgs.queries.filter(
           (query): query is string =>
-            typeof query === 'string' && query.length > 0,
+            typeof query === 'string' &&
+            query.length > 0 &&
+            !this.isExtensionOnlyQuery(query, extensions),
         )
       : [];
-    const modifiedAfter = this.resolveModifiedAfter(rawArgs.modifiedRange);
+    const { modifiedAfter, modifiedBefore } = this.resolveModifiedRange(
+      rawArgs.modifiedRange,
+    );
     // The model occasionally puts a special folder's name in `queries`
     // itself (e.g. queries: ["ดาวโหลด"]) rather than using it to say WHERE
     // to look. Once other real search terms remain, or a date filter is
@@ -511,10 +603,12 @@ export class AgentService {
     const toolArgs: SearchFilesArgs = {
       queries,
       root,
+      ...(extensions.length > 0 ? { extensions } : {}),
       maxResults,
       maxDepth:
         typeof rawArgs.maxDepth === 'number' ? rawArgs.maxDepth : undefined,
       modifiedAfter,
+      modifiedBefore,
     };
 
     if (root === undefined) {
@@ -553,10 +647,16 @@ export class AgentService {
     let result: unknown;
     let toolFailed = false;
     try {
-      result =
-        pending.toolName === 'scan_directory'
-          ? await this.mcp.scanDirectory(pending.toolArgs.path)
-          : await this.mcp.searchFiles(pending.toolArgs);
+      if (pending.toolName === 'scan_directory') {
+        result = await this.mcp.scanDirectory(pending.toolArgs.path);
+      } else if (pending.toolName === 'search_files') {
+        result = await this.mcp.searchFiles(pending.toolArgs);
+      } else {
+        result = await this.mcp.readFile(
+          pending.toolArgs.path,
+          pending.toolArgs.maxBytes,
+        );
+      }
     } catch (error) {
       toolFailed = true;
       result = {
@@ -577,9 +677,14 @@ export class AgentService {
       'tool',
       toolFailed ? 'failed' : 'done',
     );
+    const modelToolContent = JSON.stringify(formatToolResultForModel(result));
     const nextMessages: OllamaChatMessage[] = [
       ...pending.messages,
-      { role: 'tool', tool_name: pending.toolName, content: toolContent },
+      {
+        role: 'tool',
+        tool_name: pending.toolName,
+        content: modelToolContent,
+      },
     ];
     await this.step(task.id, nextMessages, pending.stepNumber + 1);
   }
@@ -660,14 +765,19 @@ export class AgentService {
           ? record.matches
           : [];
       for (const item of list) {
-        if (
-          item &&
-          typeof item === 'object' &&
-          typeof (item as Record<string, unknown>).name === 'string' &&
-          typeof (item as Record<string, unknown>).path === 'string'
-        ) {
-          const entry = item as { name: string; path: string };
-          files.set(entry.path, entry.name);
+        if (item && typeof item === 'object') {
+          const recordItem = item as Record<string, unknown>;
+          const name =
+            typeof recordItem.name === 'string'
+              ? recordItem.name
+              : recordItem['ชื่อ'];
+          const path =
+            typeof recordItem.path === 'string'
+              ? recordItem.path
+              : recordItem['ตำแหน่ง'];
+          if (typeof name === 'string' && typeof path === 'string') {
+            files.set(path, name);
+          }
         }
       }
     }
@@ -703,7 +813,7 @@ export class AgentService {
       // and a Markdown link *inside* a code span renders as literal text,
       // not a clickable link, so those backticks have to go.
       const pattern = new RegExp(
-        `\`?(?<![\\w.-])${escapedName}(?![\\w.-])\`?`,
+        `\`?(?<![\\w.\\\\/:-])${escapedName}(?![\\w.\\\\/:-])\`?`,
         'g',
       );
       if (!pattern.test(result)) continue;
@@ -717,11 +827,90 @@ export class AgentService {
     return `${this.filesApiBaseUrl}/open?path=${encodeURIComponent(path)}`;
   }
 
-  private resolveModifiedAfter(modifiedRange: unknown): string | undefined {
-    if (typeof modifiedRange !== 'string') return undefined;
+  private resolveModifiedRange(modifiedRange: unknown): {
+    modifiedAfter?: string;
+    modifiedBefore?: string;
+  } {
+    if (typeof modifiedRange !== 'string') return {};
     const days = MODIFIED_RANGE_DAYS[modifiedRange];
-    if (!days) return undefined;
-    return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    if (!days) return {};
+    const now = new Date();
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    if (modifiedRange === 'yesterday') {
+      start.setDate(start.getDate() - 1);
+      end.setDate(end.getDate() - 1);
+    } else {
+      start.setDate(start.getDate() - (days - 1));
+    }
+    return {
+      modifiedAfter: start.toISOString(),
+      modifiedBefore: end.toISOString(),
+    };
+  }
+
+  private resolveExtensions(
+    rawExtensions: unknown,
+    userText: string | undefined,
+  ): string[] {
+    const values = Array.isArray(rawExtensions)
+      ? rawExtensions.filter(
+          (value): value is string =>
+            typeof value === 'string' &&
+            /^\.?[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(value.trim()),
+        )
+      : [];
+    const text = userText ?? '';
+    for (const match of text.matchAll(/(?:^|[\s(])\.([a-z0-9]{1,10})\b/gi)) {
+      values.push(match[1]);
+    }
+    const commonTypes: Array<[RegExp, string[]]> = [
+      [/\bpdf\b/i, ['pdf']],
+      [/\b(?:word|docx?)\b/i, ['doc', 'docx']],
+      [/\b(?:excel|xlsx?)\b/i, ['xls', 'xlsx']],
+      [/\b(?:powerpoint|pptx?)\b/i, ['ppt', 'pptx']],
+      [/\btxt\b/i, ['txt']],
+      [/\bmarkdown\b|\.md\b/i, ['md']],
+    ];
+    for (const [pattern, extensions] of commonTypes) {
+      if (pattern.test(text)) values.push(...extensions);
+    }
+    return [
+      ...new Set(
+        values.map((value) => {
+          const normalized = value.trim().toLowerCase();
+          return normalized.startsWith('.') ? normalized : `.${normalized}`;
+        }),
+      ),
+    ].slice(0, 20);
+  }
+
+  private isExtensionOnlyQuery(
+    query: string,
+    extensions: string[],
+  ): boolean {
+    if (extensions.length === 0) return false;
+    const cleaned = query
+      .trim()
+      .toLowerCase()
+      .replace(/\\/g, '')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .replace(/^\^/, '')
+      .replace(/^\*/, '')
+      .replace(/\$$/, '');
+    const normalized = cleaned.startsWith('.') ? cleaned : `.${cleaned}`;
+    return extensions.includes(normalized);
+  }
+
+  private currentLocalDate(): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   /** Resolves a raw query term to a special folder's real absolute path if it names one (Thai nickname or the English name itself), else undefined. */
@@ -729,6 +918,25 @@ export class AgentService {
     const trimmed = query.trim();
     const englishName = SPECIAL_FOLDER_TRANSLATIONS[trimmed] ?? trimmed;
     return SPECIAL_FOLDER_PATHS[englishName];
+  }
+
+  private resolveDirectSpecialFolderScan(
+    text: string | undefined,
+  ): string | undefined {
+    if (!text || !DIRECTORY_LIST_INTENT.test(text)) return undefined;
+    const normalized = text.toLowerCase();
+    for (const [englishName, path] of Object.entries(SPECIAL_FOLDER_PATHS)) {
+      const aliases = [
+        englishName,
+        ...Object.entries(SPECIAL_FOLDER_TRANSLATIONS)
+          .filter(([, translated]) => translated === englishName)
+          .map(([alias]) => alias),
+      ];
+      if (aliases.some((alias) => normalized.includes(alias.toLowerCase()))) {
+        return path;
+      }
+    }
+    return undefined;
   }
 
   private expandSpecialFolderQueries(queries: string[]): string[] {

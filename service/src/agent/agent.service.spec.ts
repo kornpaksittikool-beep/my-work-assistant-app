@@ -10,6 +10,10 @@ import { OllamaService } from '../ollama/ollama.service';
 import { McpClientService } from '../mcp/mcp-client.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { AssistantTask } from '../tasks/task.types';
+import {
+  FILE_CONTENT_UNAVAILABLE_RESPONSE,
+  UNVERIFIED_FILE_RESPONSE,
+} from './tool-policy';
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -57,6 +61,7 @@ describe('AgentService', () => {
     const mcp = {
       scanDirectory: jest.fn(),
       searchFiles: jest.fn(),
+      readFile: jest.fn(),
     } as unknown as McpClientService;
     const permissions = {
       create: jest.fn(),
@@ -857,6 +862,66 @@ describe('AgentService', () => {
       });
     });
 
+    it('normalizes model and user-requested extension filters', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: [],
+                  extensions: ['PDF'],
+                  root: 'D:\\my-work',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หาไฟล์ PDF ในโปรเจกต์นี้');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ extensions: ['.pdf'] }),
+      );
+    });
+
+    it.each(['\\.md', '\\.md$', '/\\.md$/'])(
+      'drops extension-only query %s when an extension filter is active',
+      async (extensionQuery) => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: [extensionQuery],
+                  root: 'D:\\my-work',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หาไฟล์ .md ในโปรเจกต์นี้');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ queries: [], extensions: ['.md'] }),
+      );
+      },
+    );
+
     it('defaults queries to an empty array when the model omits it', async () => {
       const { agent, mcp, ollama, task } = createAgent();
       (ollama.chat as jest.Mock)
@@ -975,10 +1040,10 @@ describe('AgentService', () => {
       });
     });
 
-    it('translates modifiedRange into an exact modifiedAfter ISO boundary computed from the real current time', async () => {
-      const nowSpy = jest
-        .spyOn(Date, 'now')
-        .mockReturnValue(new Date('2026-07-15T12:00:00.000Z').getTime());
+    it('translates modifiedRange into local calendar-day boundaries', async () => {
+      jest
+        .useFakeTimers()
+        .setSystemTime(new Date('2026-07-15T12:00:00.000Z'));
       try {
         const { agent, mcp, ollama, task } = createAgent();
         (ollama.chat as jest.Mock)
@@ -1001,17 +1066,18 @@ describe('AgentService', () => {
         (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
 
         agent.start(task.id, 'find recent reports');
-        await flush();
+        await jest.runAllTimersAsync();
 
         expect(mcp.searchFiles).toHaveBeenCalledWith({
           queries: ['รายงาน'],
           root: 'D:\\my-work',
           maxResults: 25,
           maxDepth: undefined,
-          modifiedAfter: '2026-07-08T12:00:00.000Z',
+          modifiedAfter: '2026-07-08T17:00:00.000Z',
+          modifiedBefore: '2026-07-15T16:59:59.999Z',
         });
       } finally {
-        nowSpy.mockRestore();
+        jest.useRealTimers();
       }
     });
 
@@ -1490,7 +1556,59 @@ describe('AgentService', () => {
       await flush();
 
       expect(ollama.chat).toHaveBeenCalledTimes(2);
+      expect(tasks.addMessage).toHaveBeenCalledWith(
+        task.id,
+        'assistant',
+        UNVERIFIED_FILE_RESPONSE,
+        undefined,
+        undefined,
+      );
       expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('falls back to the real Desktop path when the model ignores the tool retry and fabricates a listing', async () => {
+      const { agent, tasks, events, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'พบ notes.txt และ presentation.pptx',
+        toolCalls: [],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-desktop',
+        taskId: task.id,
+        path: `${homedir()}\\Desktop`,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(
+        task.id,
+        'ช่วยสแกนหน้า Desktop ระดับบนสุดแบบอ่านอย่างเดียว แล้วสรุปสิ่งที่พบ',
+      );
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(2);
+      expect(permissions.create).toHaveBeenCalledWith(
+        task.id,
+        `${homedir()}\\Desktop`,
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+      expect(events.emit).toHaveBeenCalledWith(
+        task.id,
+        'permission_required',
+        expect.objectContaining({ permission: expect.anything() }),
+      );
+      expect(tasks.addMessage).not.toHaveBeenCalledWith(
+        task.id,
+        'assistant',
+        expect.stringContaining('notes.txt'),
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it('does not retry a mutation request (e.g. delete) even with zero tool calls, since no tool supports it', async () => {
@@ -1510,6 +1628,65 @@ describe('AgentService', () => {
         'ฉันไม่สามารถลบไฟล์ได้',
         undefined,
         undefined,
+      );
+    });
+
+    it('retries a modification-date lookup instead of mistaking "ไฟล์ที่แก้ไข" for an edit request', async () => {
+      const { agent, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: 'วันที่ดังกล่าวยังไม่เกิดขึ้น',
+          toolCalls: [],
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { modifiedRange: 'today', maxResults: 5 },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'พบไฟล์วันนี้', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(
+        task.id,
+        'ค้นหาไฟล์ในโปรเจกต์นี้ที่แก้ไขวันนี้ และแสดงไม่เกิน 5 ไฟล์',
+      );
+      await flush();
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(3);
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ root: task.workspacePath, maxResults: 5 }),
+      );
+    });
+
+    it('includes the real current local date in the system context', async () => {
+      const { agent, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ok',
+        toolCalls: [],
+      });
+
+      agent.start(task.id, 'hello');
+      await flush();
+
+      const now = new Date();
+      const expectedDate = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+      ].join('-');
+      const firstCallMessages = (ollama.chat as jest.Mock).mock.calls[0][0] as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(firstCallMessages[0].content).toContain(
+        `current local date is ${expectedDate}`,
       );
     });
 
@@ -1833,5 +2010,85 @@ describe('AgentService', () => {
         `ดูไฟล์ [README.md](http://localhost:3200/api/files/open?path=${encodeURIComponent('D:\\my-work\\README.md')}) ก่อน`,
       );
     });
+
+    it('does not inject a bare-name link into an incorrect path written by the model', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const content = 'พบ D:\\my-work\\docker\\README หนึ่งไฟล์';
+
+      const result = linkifier.linkifyFilePaths(content, [
+        {
+          role: 'tool',
+          content: JSON.stringify({
+            matches: [
+              { name: 'README', path: 'D:\\my-work\\dockers\\README' },
+            ],
+          }),
+        },
+      ]);
+
+      expect(result).toBe(content);
+    });
+  });
+
+  it('refuses a file-content summary if the model ignores read_file twice', async () => {
+    const { agent, tasks, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock).mockResolvedValue({
+      content: 'เดาจากชื่อไฟล์',
+      toolCalls: [],
+    });
+
+    agent.start(task.id, 'README.md พูดถึงอะไร สรุปเนื้อหาให้หน่อย');
+    await flush();
+
+    expect(ollama.chat).toHaveBeenCalledTimes(2);
+    expect(mcp.scanDirectory).not.toHaveBeenCalled();
+    expect(mcp.searchFiles).not.toHaveBeenCalled();
+    expect(mcp.readFile).not.toHaveBeenCalled();
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      FILE_CONTENT_UNAVAILABLE_RESPONSE,
+      undefined,
+      undefined,
+    );
+    expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+  });
+
+  it('executes read_file and allows a content summary only after real content is returned', async () => {
+    const { agent, tasks, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'read_file',
+              arguments: { path: 'D:\\my-work\\README.md', maxBytes: 4096 },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'สรุปจากเนื้อหาจริง', toolCalls: [] });
+    (mcp.readFile as jest.Mock).mockResolvedValue({
+      path: 'D:\\my-work\\README.md',
+      content: '# Project',
+      truncated: false,
+    });
+
+    agent.start(task.id, 'อ่าน README.md แล้วสรุปเนื้อหา');
+    await flush();
+
+    expect(mcp.readFile).toHaveBeenCalledWith(
+      'D:\\my-work\\README.md',
+      4096,
+    );
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'สรุปจากเนื้อหาจริง',
+      undefined,
+      expect.anything(),
+    );
   });
 });

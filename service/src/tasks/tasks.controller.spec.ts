@@ -20,6 +20,8 @@ describe('TasksController', () => {
       create: jest.fn().mockReturnValue(task),
       findAll: jest.fn().mockReturnValue([task]),
       findOne: jest.fn().mockReturnValue(task),
+      update: jest.fn().mockReturnValue(task),
+      remove: jest.fn().mockReturnValue(task),
     } as unknown as TasksRepository;
     const events = {
       stream: jest.fn().mockReturnValue('stream-observable'),
@@ -73,6 +75,20 @@ describe('TasksController', () => {
 
     expect(controller.findOne('task-1')).toBe(task);
     expect(tasks.findOne).toHaveBeenCalledWith('task-1');
+  });
+
+  it('updates a task', () => {
+    const { controller, tasks } = createController();
+
+    expect(controller.update('task-1', { title: 'Renamed' })).toBe(task);
+    expect(tasks.update).toHaveBeenCalledWith('task-1', { title: 'Renamed' });
+  });
+
+  it('deletes a task', () => {
+    const { controller, tasks } = createController();
+
+    expect(controller.remove('task-1')).toBe(task);
+    expect(tasks.remove).toHaveBeenCalledWith('task-1');
   });
 
   it('sends a message and starts the agent', () => {

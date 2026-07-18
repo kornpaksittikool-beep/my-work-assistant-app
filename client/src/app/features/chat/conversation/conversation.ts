@@ -5,6 +5,7 @@ import { MarkdownPipe } from '../../../core/pipes/markdown.pipe';
 import { PermissionCard } from '../../permissions/permission-card/permission-card';
 import { ActivityList } from '../activity-list/activity-list';
 import { ChatMessage } from '../../../core/models/assistant.models';
+import { formatLocalTime } from '../../../core/utils/date-time';
 
 /** How close to the bottom (px) still counts as "at the bottom" for
  * auto-scroll purposes - a little slack so a fraction-of-a-pixel rounding
@@ -19,6 +20,7 @@ const STICK_TO_BOTTOM_THRESHOLD_PX = 80;
 })
 export class Conversation {
   protected readonly store = inject(AssistantStore);
+  protected readonly formatLocalTime = formatLocalTime;
   private readonly http = inject(HttpClient);
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
 
@@ -60,6 +62,21 @@ export class Conversation {
     return (message.toolCalls ?? []).filter((call) => call.kind !== 'permission').length;
   }
 
+  protected hasVerifiedFileMetadata(message: ChatMessage): boolean {
+    return (message.toolCalls ?? []).some(
+      (call) => call.kind === 'tool' && call.state === 'done',
+    );
+  }
+
+  protected hasReadFileEvidence(message: ChatMessage): boolean {
+    return (message.toolCalls ?? []).some(
+      (call) =>
+        call.kind === 'tool' &&
+        call.state === 'done' &&
+        call.label.includes('read_file'),
+    );
+  }
+
   /**
    * Message content is rendered via [innerHTML], so links to the file-open
    * endpoint are plain <a> tags. Intercept them here instead of letting the
@@ -70,7 +87,12 @@ export class Conversation {
     const href = anchor?.getAttribute('href');
     if (!href || !href.includes('/api/files/open')) return;
     event.preventDefault();
-    this.http.get(href).subscribe({ error: () => undefined });
+    this.http.get(href).subscribe({
+      error: () =>
+        this.store.error.set(
+          'เปิดไฟล์ไม่สำเร็จ ไฟล์อาจถูกย้าย ลบ หรือไม่สามารถเข้าถึงได้แล้ว',
+        ),
+    });
   }
 
   private scrollToBottom(): void {

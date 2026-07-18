@@ -17,7 +17,7 @@
           >
             @if (toolCallCount(message) > 0) {
               <details class="mb-1.5 text-[12px] text-faint">
-                <summary class="cursor-pointer select-none marker:text-[10px] hover:text-muted">ใช้ {{ toolCallCount(message) }} tools</summary>
+                <summary class="cursor-pointer select-none marker:text-[10px] hover:text-muted">ใช้เครื่องมือ {{ toolCallCount(message) }} รายการ</summary>
                 <div class="mt-1 mb-0.5 flex flex-col gap-[3px] border-l border-edge pl-2.5">
                   @for (call of message.toolCalls; track call.id) {
                     <div class="flex items-center gap-1.5 text-muted">
@@ -32,8 +32,17 @@
               class="prose prose-invert max-w-none break-words text-[13px] leading-[1.65] text-[#e3e6ec] prose-p:my-1.5 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
               [innerHTML]="message.content | markdown"
             ></div>
+            @if (hasVerifiedFileMetadata(message)) {
+              <p class="mt-2 mb-0 rounded-md border border-edge bg-surface-2/60 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted">
+                @if (hasReadFileEvidence(message)) {
+                  อ่านเนื้อหาไฟล์จริงผ่าน read_file แล้ว โดยอาจถูกตัดหากไฟล์ยาวเกินขีดจำกัด
+                } @else {
+                  อ้างอิงเฉพาะชื่อไฟล์ ประเภท ขนาด และเวลาแก้ไข — ระบบยังไม่ได้อ่านเนื้อหาภายในไฟล์
+                }
+              </p>
+            }
             <div class="mt-1 leading-none" [class.text-right]="message.role === 'user'">
-              <time class="text-[10px] text-faint/75">{{ message.createdAt.slice(11, 16) }}</time>
+              <time class="text-[10px] text-faint/75">{{ formatLocalTime(message.createdAt) }}</time>
             </div>
           </div>
         </article>

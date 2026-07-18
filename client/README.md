@@ -25,7 +25,7 @@ pnpm run test   # Unit tests
 
 Interaction ที่ทดลองได้:
 
-- สร้างและเลือก task
+- สร้าง เลือก ค้นหา เปลี่ยนชื่อ archive และลบ task
 - ย่อ sidebar
 - เปิด workspace panel
 - อนุญาตหรือปฏิเสธ permission request
@@ -45,6 +45,7 @@ Interaction ที่ทดลองได้:
 - เช็คโมเดล/สถานะ Ollama ผ่าน `GET /api/health`
 - แสดงข้อผิดพลาดเมื่อ service ใช้งานไม่ได้
 - ดูย้อนหลังได้ว่าแต่ละคำตอบเรียก tool อะไรไปบ้าง (กาง dropdown "ใช้ N tools" ใต้ข้อความ) — เก็บติดกับข้อความนั้นแล้ว ไม่ใช่แค่ feed ชั่วคราวระหว่าง agent กำลังทำงาน
+- แยกให้เห็นชัดว่าคำตอบใช้เพียง metadata หรืออ่านเนื้อหาไฟล์จริงผ่าน `read_file`
 - คลิกลิงก์ไฟล์ที่ AI แนบมาในคำตอบเพื่อเปิด Explorer ที่ตำแหน่งไฟล์นั้นได้ทันที
 
 ก่อนเปิด client ให้รัน service ที่ `http://localhost:3200` และ Ollama ก่อน

@@ -1,7 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join } from 'path';
 import {
   AssistantTask,
@@ -25,9 +33,27 @@ export class TasksRepository {
     // last persisted instead of always starting empty. A missing or
     // corrupt file just means "nothing to load yet", not a boot failure.
     try {
-      const raw = readFileSync(this.dataFile, 'utf8');
+      let raw: string;
+      try {
+        raw = readFileSync(this.dataFile, 'utf8');
+        JSON.parse(raw);
+      } catch {
+        raw = readFileSync(`${this.dataFile}.bak`, 'utf8');
+      }
       const tasks = JSON.parse(raw) as AssistantTask[];
-      for (const task of tasks) this.tasks.set(task.id, task);
+      let recoveredTransientTask = false;
+      for (const task of tasks) {
+        // Agent runs and permission requests intentionally live in memory.
+        // They cannot resume after a service restart, so do not leave their
+        // persisted task shells stuck forever in a state with no live run.
+        if (task.status === 'working' || task.status === 'waiting_permission') {
+          task.status = 'stopped';
+          task.updatedAt = new Date().toISOString();
+          recoveredTransientTask = true;
+        }
+        this.tasks.set(task.id, task);
+      }
+      if (recoveredTransientTask) this.persist();
     } catch {
       // no persisted data yet (first run, or file missing/corrupt)
     }
@@ -50,9 +76,28 @@ export class TasksRepository {
   }
 
   findAll(): AssistantTask[] {
-    return [...this.tasks.values()].sort((a, b) =>
+    return [...this.tasks.values()].filter((task) => !task.archived).sort((a, b) =>
       b.updatedAt.localeCompare(a.updatedAt),
     );
+  }
+
+  update(
+    id: string,
+    changes: { title?: string; archived?: boolean },
+  ): AssistantTask {
+    const task = this.findOne(id);
+    if (changes.title !== undefined) task.title = changes.title.trim();
+    if (changes.archived !== undefined) task.archived = changes.archived;
+    task.updatedAt = new Date().toISOString();
+    this.persist();
+    return task;
+  }
+
+  remove(id: string): AssistantTask {
+    const task = this.findOne(id);
+    this.tasks.delete(id);
+    this.persist();
+    return task;
   }
 
   findOne(id: string): AssistantTask {
@@ -69,6 +114,13 @@ export class TasksRepository {
     toolCalls?: ToolActivityEntry[],
   ): ChatMessage {
     const task = this.findOne(taskId);
+    if (
+      role === 'user' &&
+      task.messages.length === 0 &&
+      task.title.trim() === 'งานใหม่'
+    ) {
+      task.title = this.titleFromFirstMessage(content);
+    }
     const message: ChatMessage = {
       id: randomUUID(),
       role,
@@ -81,6 +133,14 @@ export class TasksRepository {
     task.updatedAt = message.createdAt;
     this.persist();
     return message;
+  }
+
+  private titleFromFirstMessage(content: string): string {
+    const normalized = content.replace(/\s+/g, ' ').trim();
+    const maxLength = 52;
+    return normalized.length > maxLength
+      ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
+      : normalized || 'งานใหม่';
   }
 
   setStatus(taskId: string, status: TaskStatus): AssistantTask {
@@ -97,6 +157,17 @@ export class TasksRepository {
    * what is still just "don't lose the conversation on restart". */
   private persist(): void {
     mkdirSync(dirname(this.dataFile), { recursive: true });
-    writeFileSync(this.dataFile, JSON.stringify([...this.tasks.values()]));
+    const temporaryFile = `${this.dataFile}.tmp`;
+    const backupFile = `${this.dataFile}.bak`;
+    writeFileSync(temporaryFile, JSON.stringify([...this.tasks.values()]));
+    if (existsSync(this.dataFile)) copyFileSync(this.dataFile, backupFile);
+    try {
+      renameSync(temporaryFile, this.dataFile);
+    } catch {
+      // Windows may refuse replacing an existing destination. The backup is
+      // already durable, so use a short remove+rename fallback.
+      rmSync(this.dataFile, { force: true });
+      renameSync(temporaryFile, this.dataFile);
+    }
   }
 }

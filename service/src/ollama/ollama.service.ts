@@ -56,7 +56,11 @@ export class OllamaService {
           model: this.model,
           stream: true,
           messages,
-          tools: [this.scanDirectoryTool(), this.searchFilesTool()],
+          tools: [
+            this.scanDirectoryTool(),
+            this.searchFilesTool(),
+            this.readFileTool(),
+          ],
           options: { num_ctx: this.numCtx },
         }),
       });
@@ -143,6 +147,19 @@ export class OllamaService {
               description:
                 'Optional absolute path to restrict the search to. Omit to search every allowed root.',
             },
+            extensions: {
+              type: 'array',
+              items: { type: 'string' },
+              maxItems: 20,
+              description:
+                'Optional file-extension filter, for example [".pdf"] or [".doc", ".docx"]. Use this instead of treating an extension as a filename query.',
+            },
+            maxResults: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 500,
+              description: 'Maximum number of matches to return.',
+            },
             modifiedRange: {
               type: 'string',
               enum: [
@@ -154,6 +171,31 @@ export class OllamaService {
               ],
               description:
                 'Only include files/folders last modified within this rolling window up to now. Pick the closest bucket for whatever the user said (e.g. "last week"/"a few days ago" → last_7_days, "last month" → last_30_days, "this quarter"/"few months ago" → last_90_days).',
+            },
+          },
+        },
+      },
+    };
+  }
+
+  private readFileTool(): Record<string, unknown> {
+    return {
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description:
+          'Read or extract actual content from an exact .txt, .md, .json, .pdf, .docx, .xlsx or .pptx path. Use this before making any claim about what a file says or contains.',
+        parameters: {
+          type: 'object',
+          required: ['path'],
+          properties: {
+            path: { type: 'string', description: 'Exact absolute file path.' },
+            maxBytes: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 262144,
+              description:
+                'Maximum extracted-content bytes to return; default 65536.',
             },
           },
         },

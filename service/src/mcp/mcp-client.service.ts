@@ -12,6 +12,7 @@ interface McpResponse {
 
 export interface SearchFilesArgs {
   queries: string[];
+  extensions?: string[];
   root?: string;
   maxResults?: number;
   maxDepth?: number;
@@ -30,6 +31,10 @@ export class McpClientService {
 
   scanDirectory(path: string): Promise<unknown> {
     return this.callTool('scan_directory', { path });
+  }
+
+  readFile(path: string, maxBytes?: number): Promise<unknown> {
+    return this.callTool('read_file', { path, maxBytes });
   }
 
   searchFiles(args: SearchFilesArgs): Promise<unknown> {

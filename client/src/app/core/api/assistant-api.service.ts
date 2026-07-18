@@ -35,4 +35,20 @@ export class AssistantApiService {
   stopTask(taskId: string): Observable<ApiEnvelope<AssistantTask>> {
     return this.http.post<ApiEnvelope<AssistantTask>>(`${API_BASE_URL}/tasks/${taskId}/stop`, {});
   }
+
+  updateTask(
+    taskId: string,
+    changes: { title?: string; archived?: boolean },
+  ): Observable<ApiEnvelope<AssistantTask>> {
+    return this.http.patch<ApiEnvelope<AssistantTask>>(
+      `${API_BASE_URL}/tasks/${taskId}`,
+      changes,
+    );
+  }
+
+  deleteTask(taskId: string): Observable<ApiEnvelope<AssistantTask>> {
+    return this.http.delete<ApiEnvelope<AssistantTask>>(
+      `${API_BASE_URL}/tasks/${taskId}`,
+    );
+  }
 }
