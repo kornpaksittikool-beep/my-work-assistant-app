@@ -1,6 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { homedir } from 'os';
+import { mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { homedir, tmpdir } from 'os';
+import { join } from 'path';
 import { AgentService, SEARCH_EVERYWHERE_LABEL } from './agent.service';
 import { TasksRepository } from '../tasks/tasks.repository';
 import { TaskEventsService } from '../tasks/task-events.service';
@@ -524,7 +526,7 @@ describe('AgentService', () => {
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
   });
 
-  it('stops the task when permission is denied', async () => {
+  it('stops the task and replies with a real chat message when permission is denied, instead of going silent', async () => {
     const { agent, tasks, events, ollama, permissions, task } = createAgent();
     (ollama.chat as jest.Mock).mockResolvedValue({
       content: '',
@@ -553,7 +555,11 @@ describe('AgentService', () => {
     (permissions.resolve as jest.Mock).mockReturnValue({
       id: 'perm-1',
       taskId: task.id,
+      path: 'C:\\Windows',
+      action: 'read_directory',
+      access: 'read',
       status: 'denied',
+      createdAt: 'now',
     });
 
     agent.start(task.id, 'scan outside');
@@ -561,6 +567,16 @@ describe('AgentService', () => {
 
     agent.resolvePermission(task.id, 'perm-1', false);
 
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      expect.stringContaining('C:\\Windows'),
+      undefined,
+      expect.anything(),
+    );
+    expect(events.emit).toHaveBeenCalledWith(task.id, 'message', {
+      message: expect.anything(),
+    });
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'stopped');
     expect(events.emit).toHaveBeenCalledWith(task.id, 'status', {
       status: 'stopped',
@@ -1495,6 +1511,109 @@ describe('AgentService', () => {
       await flush();
 
       expect(ollama.chat).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('inferring search_files root from a project/folder the user already named', () => {
+    let tmpWorkspace: string;
+
+    beforeEach(() => {
+      tmpWorkspace = mkdtempSync(join(tmpdir(), 'agent-workspace-'));
+      mkdirSync(join(tmpWorkspace, 'my-sub-project'));
+    });
+
+    afterEach(() => {
+      rmSync(tmpWorkspace, { recursive: true, force: true });
+    });
+
+    it('scopes into a named subfolder that exists directly under the workspace, without requiring permission', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      task.workspacePath = tmpWorkspace;
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['package.json'] },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(
+        task.id,
+        'หา package.json ในโปรเจกต์ my-sub-project ให้หน่อย',
+      );
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: join(tmpWorkspace, 'my-sub-project'),
+        }),
+      );
+    });
+
+    it('scopes to the workspace itself on a generic "this project" reference', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      task.workspacePath = tmpWorkspace;
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['package.json'] },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หา package.json ในโปรเจกต์นี้ให้หน่อย');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ root: tmpWorkspace }),
+      );
+    });
+
+    it('still searches everywhere (and asks permission) when nothing in the message names a real subfolder', async () => {
+      const { agent, permissions, ollama, task } = createAgent();
+      task.workspacePath = tmpWorkspace;
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'search_files',
+              arguments: { queries: ['package.json'] },
+            },
+          },
+        ],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-scope',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(task.id, 'หา package.json ให้หน่อย ไม่รู้อยู่ไหน');
+      await flush();
+
+      expect(permissions.create).toHaveBeenCalledWith(
+        task.id,
+        SEARCH_EVERYWHERE_LABEL,
+      );
     });
   });
 

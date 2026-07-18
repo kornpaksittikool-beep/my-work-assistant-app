@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
+import { Dirent, readdirSync } from 'fs';
 import { homedir } from 'os';
 import { posix, win32 } from 'path';
 import { McpClientService, SearchFilesArgs } from '../mcp/mcp-client.service';
@@ -87,6 +88,12 @@ const LOOKUP_INTENT_PATTERN =
   /ไฟล์|โฟลเดอร์|เอกสาร|หา|ค้นหา|ดู|สแกน|มีอะไร|อยู่ที่ไหน|\bfile\b|\bfolder\b|\bdirectory\b|\bfind\b|\bsearch\b|\bscan\b|\blist\b|\bshow\b/i;
 const MUTATION_INTENT_PATTERN =
   /ลบ|แก้ไข|เปลี่ยน|สร้าง|ย้าย|คัดลอก|เขียน|บันทึก|\bdelete\b|\bremove\b|\bedit\b|\bmodify\b|\bwrite\b|\bcreate\b|\brename\b|\bmove\b|\bcopy\b/i;
+
+/** Matches the user referring to the active workspace itself by a generic
+ * phrase rather than naming one of its subfolders - see
+ * resolveNamedWorkspaceScope(). */
+const WORKSPACE_SELF_REFERENCE_PATTERN =
+  /โปรเจกต์นี้|โฟลเดอร์นี้|ในนี้|this project|this folder|this workspace/i;
 
 /**
  * Absolute path for each special folder on this machine, computed from the
@@ -223,7 +230,20 @@ export class AgentService {
         'เสร็จสิ้น',
         'permission',
       );
+      // A denial used to just stop the run with no chat reply at all - from
+      // the user's side that looked identical to the app hanging, with
+      // nothing confirming their "no" was actually understood.
+      const toolCalls = this.toolActivity.get(permission.taskId);
+      this.toolActivity.delete(permission.taskId);
+      const message = this.tasks.addMessage(
+        permission.taskId,
+        'assistant',
+        `ได้ครับ ไม่เข้าถึง "${permission.path}" ตามที่แจ้ง หากต้องการให้ลองค้นในที่อื่นหรือระบุตำแหน่งที่แน่นอนกว่านี้ แจ้งได้เลยครับ`,
+        undefined,
+        toolCalls?.length ? toolCalls : undefined,
+      );
       this.tasks.setStatus(permission.taskId, 'stopped');
+      this.events.emit(permission.taskId, 'message', { message });
       this.events.emit(permission.taskId, 'status', {
         status: 'stopped',
         text: 'ผู้ใช้ไม่อนุญาตการเข้าถึง',
@@ -247,7 +267,7 @@ export class AgentService {
     const messages: OllamaChatMessage[] = [
       {
         role: 'system',
-        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. When the user asks about files by time (e.g. "อาทิตย์ที่แล้ว"/last week, "เดือนที่แล้ว"/last month, "เมื่อวาน"/yesterday, "วันนี้"/today), set search_files.modifiedRange to the closest bucket (today, yesterday, last_7_days, last_30_days, or last_90_days) instead of trying to compute exact dates yourself — you don't reliably know today's date or do date arithmetic, the bucket boundaries are computed for you. Combine modifiedRange with queries to filter a name search by time, or give modifiedRange alone (omitting queries) to list everything changed in that window regardless of name. This machine's Windows special folders are at these exact fixed paths, listed as Thai name(s) (English name) = path: ${SPECIAL_FOLDER_PROMPT_SEGMENT}. When the user wants to see what is inside one of these (e.g. "ดูในดาวน์โหลดมีอะไรบ้าง"), call scan_directory directly with that exact path — never guess a different path for it (e.g. assuming it sits inside the active workspace), and don't use search_files for this, since search_files only returns items found *inside* the folders it walks and can never return one of the walked folders itself, so it can't answer "what's in Downloads" even when scoped correctly. Only use search_files with one of these folders when the user is looking for a specific file that might be inside it by name; in that case still pass both the Thai term and the real English folder name as separate query items (e.g. queries: ["ดาวโหลด", "Downloads"]) and omit "root" so it searches every allowed location — the folder on disk is always named in English regardless of the OS display language, so a Thai-only query would never match it since matching is a literal substring, not a translation. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
+        content: `You are a local AI assistant. The active workspace is ${task.workspacePath}. Use scan_directory to list the contents of a folder you already know the path to. Use search_files instead when the user is looking for a file or folder but doesn't know exactly where it is — it recurses through subfolders, and omitting its "root" argument searches every allowed location on this machine at once rather than just the active workspace. Pass every alternative search word as a separate item in search_files.queries; the tool matches them with OR in one directory walk, and each query is matched as a literal substring of the file/folder name — it does not read file contents and does not stem or segment words. For Thai queries especially, don't only pass the exact compound phrase the user typed (e.g. "หนี้สิน"): also include its shorter root words and common synonyms as separate items (e.g. "หนี้", "สิน", "เงินกู้", "สินเชื่อ") since real filenames may combine the root with a different word (e.g. "หนี้บ้าน") rather than using the user's exact phrase. When the user asks about files by time (e.g. "อาทิตย์ที่แล้ว"/last week, "เดือนที่แล้ว"/last month, "เมื่อวาน"/yesterday, "วันนี้"/today), set search_files.modifiedRange to the closest bucket (today, yesterday, last_7_days, last_30_days, or last_90_days) instead of trying to compute exact dates yourself — you don't reliably know today's date or do date arithmetic, the bucket boundaries are computed for you. Combine modifiedRange with queries to filter a name search by time, or give modifiedRange alone (omitting queries) to list everything changed in that window regardless of name. This machine's Windows special folders are at these exact fixed paths, listed as Thai name(s) (English name) = path: ${SPECIAL_FOLDER_PROMPT_SEGMENT}. When the user wants to see what is inside one of these (e.g. "ดูในดาวน์โหลดมีอะไรบ้าง"), call scan_directory directly with that exact path — never guess a different path for it (e.g. assuming it sits inside the active workspace), and don't use search_files for this, since search_files only returns items found *inside* the folders it walks and can never return one of the walked folders itself, so it can't answer "what's in Downloads" even when scoped correctly. Only use search_files with one of these folders when the user is looking for a specific file that might be inside it by name; in that case still pass both the Thai term and the real English folder name as separate query items (e.g. queries: ["ดาวโหลด", "Downloads"]) and omit "root" so it searches every allowed location — the folder on disk is always named in English regardless of the OS display language, so a Thai-only query would never match it since matching is a literal substring, not a translation. Both tools also work on absolute paths outside the active workspace, including other drive letters (e.g. G:\\) — call them directly with that path/root instead of assuming it's a typo; the system will automatically ask the user for permission whenever a tool call reaches outside the active workspace, or whenever search_files searches everywhere. The \`size\` field in every tool result is always in bytes (ไบต์) — never call it บิต (bits), and convert to KB/MB yourself using 1024 bytes per KB when that reads better. Never invent tool results — call search_files or scan_directory again for every new file/folder topic the user asks about, even within the same conversation, rather than answering from a previous search's result. When the user asks about a different file or topic than their last search, start a fresh search_files call with new queries and omit "root" again (search everywhere) — do not reuse or narrow to the folder where the previous search found something unless the user explicitly says to look in that same folder. Keep replies short and to the point — a sentence or two, not a bulleted list of options. If you're missing information, ask one focused question instead of several. Respond in the user's language.`,
       },
       ...task.messages
         .filter((message) => message.role !== 'tool')
@@ -313,6 +333,7 @@ export class AgentService {
       toolName,
       call.function.arguments,
       task.workspacePath,
+      this.lastUserMessageText(messages),
     );
     const pending: PendingToolRun = {
       taskId,
@@ -340,20 +361,26 @@ export class AgentService {
       (entry) => entry.kind === 'tool',
     );
     if (usedRealTool) return false;
-    const lastUserMessage = [...messages]
-      .reverse()
-      .find((message) => message.role === 'user');
+    const lastUserMessage = this.lastUserMessageText(messages);
     if (!lastUserMessage) return false;
     return (
-      LOOKUP_INTENT_PATTERN.test(lastUserMessage.content) &&
-      !MUTATION_INTENT_PATTERN.test(lastUserMessage.content)
+      LOOKUP_INTENT_PATTERN.test(lastUserMessage) &&
+      !MUTATION_INTENT_PATTERN.test(lastUserMessage)
     );
+  }
+
+  private lastUserMessageText(
+    messages: OllamaChatMessage[],
+  ): string | undefined {
+    return [...messages].reverse().find((message) => message.role === 'user')
+      ?.content;
   }
 
   private resolveTarget(
     toolName: ToolName,
     rawArgs: Record<string, unknown>,
     workspacePath: string,
+    lastUserMessage: string | undefined,
   ): ResolvedTarget {
     if (toolName === 'scan_directory') {
       const path =
@@ -392,6 +419,7 @@ export class AgentService {
 
     let queries: string[];
     let root: string | undefined;
+    let forcedEverywhereBySpecialFolder = false;
     if (scopeIntoSpecialFolder) {
       queries = remainingQueries;
       root = matchedFolderPath;
@@ -408,6 +436,7 @@ export class AgentService {
       const matchedSpecialFolder = rawQueries.some((query) =>
         SPECIAL_FOLDER_NAMES.has(query.trim()),
       );
+      forcedEverywhereBySpecialFolder = matchedSpecialFolder;
       // The model also occasionally passes a bare word (e.g. "Downloads")
       // as root instead of omitting it, meaning "search everywhere for
       // this name" - that isn't a real path and would just hard-fail
@@ -420,6 +449,16 @@ export class AgentService {
         : rawRoot && (win32.isAbsolute(rawRoot) || posix.isAbsolute(rawRoot))
           ? rawRoot
           : undefined;
+    }
+    // The model frequently leaves root omitted (which always needs a
+    // permission prompt to search everywhere) even when the user already
+    // named a specific project/subfolder that exists right under the
+    // workspace - e.g. "ในโปรเจกต์ 1-scan-file" or "ในโปรเจกต์นี้" (observed
+    // directly: both defaulted to search-everywhere despite the explicit
+    // scope). Infer that scope from the user's own words instead of forcing
+    // an unnecessary permission prompt and an unnecessarily broad search.
+    if (root === undefined && !forcedEverywhereBySpecialFolder) {
+      root = this.resolveNamedWorkspaceScope(lastUserMessage, workspacePath);
     }
     const rawMaxResults =
       typeof rawArgs.maxResults === 'number' ? rawArgs.maxResults : undefined;
@@ -600,6 +639,40 @@ export class AgentService {
           !!translated && !queries.includes(translated),
       );
     return additions.length ? [...queries, ...new Set(additions)] : queries;
+  }
+
+  /**
+   * Infers a search_files root directly from the user's own message when the
+   * model left it unscoped: either the workspace itself (a generic "this
+   * project" reference) or one of the workspace's own immediate subfolders
+   * mentioned by name (e.g. "1-scan-file"). Reads the workspace's real
+   * subfolder names fresh each time rather than a fixed table - unlike the
+   * Windows special folders, project layout varies per workspace and isn't
+   * known in advance. Only checks direct children (one level), matching how
+   * people actually refer to "the X project" - not something inferred from
+   * an unrelated substring collision several levels deep.
+   */
+  private resolveNamedWorkspaceScope(
+    text: string | undefined,
+    workspacePath: string,
+  ): string | undefined {
+    if (!text) return undefined;
+    if (WORKSPACE_SELF_REFERENCE_PATTERN.test(text)) return workspacePath;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(workspacePath, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+    const normalizedText = text.toLowerCase();
+    const match = entries.find(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.name.startsWith('.') &&
+        entry.name.toLowerCase() !== 'node_modules' &&
+        normalizedText.includes(entry.name.toLowerCase()),
+    );
+    return match ? win32.join(workspacePath, match.name) : undefined;
   }
 
   private isWithin(candidate: string, root: string): boolean {
