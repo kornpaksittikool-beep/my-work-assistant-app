@@ -1,4 +1,4 @@
-<section #scrollContainer class="mx-auto h-full w-[min(100%,900px)] overflow-y-auto px-[34px] pt-8 pb-8 [scrollbar-width:thin] max-[620px]:px-[15px] max-[620px]:pt-6 max-[620px]:pb-5" aria-live="polite" (click)="onContentClick($event)" (scroll)="onScroll($event)">
+<section #scrollContainer class="mx-auto h-full w-[min(100%,900px)] overflow-y-auto px-[34px] pt-8 pb-8 [scrollbar-width:thin] [overflow-anchor:none] max-[620px]:px-[15px] max-[620px]:pt-6 max-[620px]:pb-5" aria-live="polite" (click)="onContentClick($event)" (scroll)="onScroll($event)">
   @if (store.loading()) {
     <div class="grid min-h-[360px] place-content-center justify-items-center gap-[9px] text-center text-muted"><span class="animate-agent-spin w-[22px] text-center text-base text-[#8591ff]">◌</span><p class="m-0 text-[13px]">กำลังโหลด task...</p></div>
   } @else if (!store.activeTask()) {

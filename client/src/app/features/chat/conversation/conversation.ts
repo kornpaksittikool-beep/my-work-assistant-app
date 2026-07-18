@@ -38,8 +38,13 @@ export class Conversation {
       this.store.messages().length;
       this.store.streamingText();
       this.store.activities().length;
-      this.store.pendingPermission();
-      if (this.stickToBottom) this.scrollToBottom();
+      // A pending permission blocks the whole agent run on the user's
+      // decision, so it always scrolls into view - unlike an ordinary new
+      // message, there's no reasonable case for leaving it hidden while the
+      // user reads older history, since nothing proceeds until they act on
+      // it either way.
+      const awaitingDecision = this.store.pendingPermission() !== null;
+      if (this.stickToBottom || awaitingDecision) this.scrollToBottom();
     });
   }
 
