@@ -1557,6 +1557,67 @@ describe('AgentService', () => {
       );
     });
 
+    it('redirects to scan_directory when the model puts the matched folder name itself as the only query (self-defeating for search_files)', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      task.workspacePath = tmpWorkspace;
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['my-sub-project'] },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.scanDirectory as jest.Mock).mockResolvedValue({ entries: [] });
+
+      agent.start(task.id, 'ในโปรเจกต์ my-sub-project มีไฟล์อะไรบ้าง');
+      await flush();
+
+      expect(mcp.scanDirectory).toHaveBeenCalledWith(
+        join(tmpWorkspace, 'my-sub-project'),
+      );
+      expect(mcp.searchFiles).not.toHaveBeenCalled();
+    });
+
+    it('drops the matched folder name from queries but keeps searching when a real search term is combined with it', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      task.workspacePath = tmpWorkspace;
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['my-sub-project', 'package.json'],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(
+        task.id,
+        'หา package.json ในโปรเจกต์ my-sub-project ให้หน่อย',
+      );
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queries: ['package.json'],
+          root: join(tmpWorkspace, 'my-sub-project'),
+        }),
+      );
+    });
+
     it('scopes to the workspace itself on a generic "this project" reference', async () => {
       const { agent, mcp, ollama, task } = createAgent();
       task.workspacePath = tmpWorkspace;
@@ -1660,6 +1721,91 @@ describe('AgentService', () => {
           },
         ]),
       ).toBe(content);
+    });
+
+    it('links a bare filename when the model never repeats the full path (the common case for scan_directory summaries)', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const path = 'D:\\my-work\\dockers\\docker-compose.yml';
+
+      const result = linkifier.linkifyFilePaths(
+        'ไฟล์ docker-compose.yml ขนาด 970 ไบต์',
+        [
+          {
+            role: 'tool',
+            content: JSON.stringify({
+              entries: [{ name: 'docker-compose.yml', path }],
+            }),
+          },
+        ],
+      );
+
+      expect(result).toBe(
+        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) ขนาด 970 ไบต์`,
+      );
+    });
+
+    it('strips backticks around a bare filename rather than leaving the Markdown link nested inside a code span (observed: renders as literal text, not a link)', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const path = 'D:\\my-work\\dockers\\docker-compose.yml';
+
+      const result = linkifier.linkifyFilePaths(
+        'ไฟล์ `docker-compose.yml` (ขนาด 970 ไบต์)',
+        [
+          {
+            role: 'tool',
+            content: JSON.stringify({
+              entries: [{ name: 'docker-compose.yml', path }],
+            }),
+          },
+        ],
+      );
+
+      expect(result).toBe(
+        `ไฟล์ [docker-compose.yml](http://localhost:3200/api/files/open?path=${encodeURIComponent(path)}) (ขนาด 970 ไบต์)`,
+      );
+    });
+
+    it('does not link an ambiguous bare name shared by multiple results, to avoid pointing at the wrong file', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const content = 'พบ README.md สองไฟล์';
+
+      const result = linkifier.linkifyFilePaths(content, [
+        {
+          role: 'tool',
+          content: JSON.stringify({
+            matches: [
+              { name: 'README.md', path: 'D:\\my-work\\a\\README.md' },
+              { name: 'README.md', path: 'D:\\my-work\\b\\README.md' },
+            ],
+          }),
+        },
+      ]);
+
+      expect(result).toBe(content);
+    });
+
+    it('does not let a bare name match as a prefix of a longer filename that shares the same stem', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+
+      const result = linkifier.linkifyFilePaths('ดูไฟล์ README.md ก่อน', [
+        {
+          role: 'tool',
+          content: JSON.stringify({
+            entries: [
+              { name: 'README', path: 'D:\\my-work\\README' },
+              { name: 'README.md', path: 'D:\\my-work\\README.md' },
+            ],
+          }),
+        },
+      ]);
+
+      expect(result).toBe(
+        `ดูไฟล์ [README.md](http://localhost:3200/api/files/open?path=${encodeURIComponent('D:\\my-work\\README.md')}) ก่อน`,
+      );
     });
   });
 });

@@ -458,7 +458,43 @@ export class AgentService {
     // scope). Infer that scope from the user's own words instead of forcing
     // an unnecessary permission prompt and an unnecessarily broad search.
     if (root === undefined && !forcedEverywhereBySpecialFolder) {
-      root = this.resolveNamedWorkspaceScope(lastUserMessage, workspacePath);
+      const scope = this.resolveNamedWorkspaceScope(
+        lastUserMessage,
+        workspacePath,
+      );
+      if (scope) {
+        root = scope.path;
+        // The model sometimes puts the *folder name itself* in queries
+        // (mirroring the special-folder pattern above) rather than using it
+        // to say where to look - e.g. queries: ["dockers"] after already
+        // being scoped into .../dockers. That's self-defeating: search_files
+        // can never return the very folder it's walking, only things found
+        // inside it (observed directly: this produced an empty "not found"
+        // result for a folder that plainly exists and has content). Drop
+        // that token from queries like the special-folder case already
+        // does - or, if it was the *only* query with no date filter either,
+        // the user just wanted a directory listing, which is exactly what
+        // scan_directory is for.
+        if (scope.matchedFolderName) {
+          const withoutFolderName = queries.filter(
+            (query) =>
+              query.trim().toLowerCase() !==
+              scope.matchedFolderName!.toLowerCase(),
+          );
+          if (withoutFolderName.length < queries.length) {
+            if (withoutFolderName.length > 0 || modifiedAfter !== undefined) {
+              queries = withoutFolderName;
+            } else {
+              return {
+                toolName: 'scan_directory',
+                toolArgs: { path: root },
+                displayPath: root,
+                requiresPermission: !this.isWithin(root, workspacePath),
+              };
+            }
+          }
+        }
+      }
     }
     const rawMaxResults =
       typeof rawArgs.maxResults === 'number' ? rawArgs.maxResults : undefined;
@@ -571,6 +607,16 @@ export class AgentService {
    * need to produce correct link/URI syntax itself for arbitrary Windows
    * paths (including Thai filenames) - only mention the same path text the
    * tool already returned.
+   *
+   * Two passes, in order:
+   * 1. The model occasionally repeats a result's full absolute path verbatim
+   *    in its own prose - link that occurrence directly.
+   * 2. Far more often it only writes the bare filename with no path at all
+   *    (observed directly: scan_directory folder listings almost never got
+   *    linked because of this) - link that instead, but only when the name
+   *    is unique among this turn's results, so an ambiguous name shared by
+   *    several entries (e.g. multiple "README.md" in different folders) is
+   *    left as plain text rather than risk linking to the wrong one.
    */
   private linkifyFilePaths(
     content: string,
@@ -606,15 +652,48 @@ export class AgentService {
     }
 
     let result = content;
-    const paths = [...files.keys()].sort((a, b) => b.length - a.length);
-    for (const path of paths) {
+    const linkedPaths = new Set<string>();
+    const pathsByLength = [...files.keys()].sort((a, b) => b.length - a.length);
+    for (const path of pathsByLength) {
       const name = files.get(path)!.replace(/([[\]])/g, '\\$1');
       const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const pattern = new RegExp('`?' + escapedPath + '`?', 'g');
-      const url = `${this.filesApiBaseUrl}/open?path=${encodeURIComponent(path)}`;
-      result = result.replace(pattern, `[${name}](${url})`);
+      if (!pattern.test(result)) continue;
+      result = result.replace(pattern, `[${name}](${this.fileOpenUrl(path)})`);
+      linkedPaths.add(path);
     }
+
+    const nameCounts = new Map<string, number>();
+    for (const name of files.values()) {
+      nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    }
+    const remaining = [...files.entries()]
+      .filter(
+        ([path, name]) => !linkedPaths.has(path) && nameCounts.get(name) === 1,
+      )
+      .sort(([, a], [, b]) => b.length - a.length);
+    for (const [path, name] of remaining) {
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Lookaround boundary rather than \b: filenames often contain `.`/`-`,
+      // which \b treats as a break, so \b would happily match "README"
+      // inside "README.md" as if the extension weren't there. The optional
+      // surrounding backticks are consumed (not just tolerated) for the same
+      // reason as pass 1 - the model often writes a bare name as `` `name` ``,
+      // and a Markdown link *inside* a code span renders as literal text,
+      // not a clickable link, so those backticks have to go.
+      const pattern = new RegExp(
+        `\`?(?<![\\w.-])${escapedName}(?![\\w.-])\`?`,
+        'g',
+      );
+      if (!pattern.test(result)) continue;
+      result = result.replace(pattern, `[${name}](${this.fileOpenUrl(path)})`);
+    }
+
     return result;
+  }
+
+  private fileOpenUrl(path: string): string {
+    return `${this.filesApiBaseUrl}/open?path=${encodeURIComponent(path)}`;
   }
 
   private resolveModifiedAfter(modifiedRange: unknown): string | undefined {
@@ -655,9 +734,11 @@ export class AgentService {
   private resolveNamedWorkspaceScope(
     text: string | undefined,
     workspacePath: string,
-  ): string | undefined {
+  ): { path: string; matchedFolderName?: string } | undefined {
     if (!text) return undefined;
-    if (WORKSPACE_SELF_REFERENCE_PATTERN.test(text)) return workspacePath;
+    if (WORKSPACE_SELF_REFERENCE_PATTERN.test(text)) {
+      return { path: workspacePath };
+    }
     let entries: Dirent[];
     try {
       entries = readdirSync(workspacePath, { withFileTypes: true });
@@ -672,7 +753,12 @@ export class AgentService {
         entry.name.toLowerCase() !== 'node_modules' &&
         normalizedText.includes(entry.name.toLowerCase()),
     );
-    return match ? win32.join(workspacePath, match.name) : undefined;
+    return match
+      ? {
+          path: win32.join(workspacePath, match.name),
+          matchedFolderName: match.name,
+        }
+      : undefined;
   }
 
   private isWithin(candidate: string, root: string): boolean {
