@@ -98,6 +98,32 @@ describe('OllamaService', () => {
       expect(deltas).toEqual(['Hel', 'lo']);
     });
 
+    it('sends num_ctx 8192 by default, and the configured value when OLLAMA_NUM_CTX is set', async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          mockStreamResponse([{ message: { content: 'ok' } }]),
+        )
+        .mockResolvedValueOnce(
+          mockStreamResponse([{ message: { content: 'ok' } }]),
+        );
+      global.fetch = fetchMock;
+
+      await createService().chat([{ role: 'user', content: 'hi' }]);
+      let body = JSON.parse(fetchMock.mock.calls[0][1].body) as {
+        options: { num_ctx: number };
+      };
+      expect(body.options).toEqual({ num_ctx: 8192 });
+
+      await createService({ OLLAMA_NUM_CTX: 16384 }).chat([
+        { role: 'user', content: 'hi' },
+      ]);
+      body = JSON.parse(fetchMock.mock.calls[1][1].body) as {
+        options: { num_ctx: number };
+      };
+      expect(body.options).toEqual({ num_ctx: 16384 });
+    });
+
     it('defaults content and toolCalls when the message omits them', async () => {
       global.fetch = jest
         .fn()
@@ -125,11 +151,41 @@ describe('OllamaService', () => {
       );
     });
 
-    it('throws BadGatewayException on a non-ok HTTP status', async () => {
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+    it('throws BadGatewayException on a non-ok HTTP status, including the response body in the message', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('model not found'),
+      });
       const service = createService();
 
-      await expect(service.chat([])).rejects.toThrow(BadGatewayException);
+      await expect(service.chat([])).rejects.toThrow(
+        'Ollama returned HTTP 500: model not found',
+      );
+    });
+
+    it('omits the trailing colon when the error response has no body', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve(''),
+      });
+      const service = createService();
+
+      await expect(service.chat([])).rejects.toThrow('Ollama returned HTTP 500');
+    });
+
+    it('handles a failed attempt to read the HTTP error body', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: () => Promise.reject(new Error('body unavailable')),
+      });
+      const service = createService();
+
+      await expect(service.chat([])).rejects.toThrow(
+        'Ollama returned HTTP 502',
+      );
     });
 
     it('throws BadGatewayException when the response body is missing', async () => {

@@ -37,6 +37,11 @@ export class EnvironmentVariables {
   OLLAMA_MODEL?: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(256)
+  OLLAMA_NUM_CTX?: number;
+
+  @IsOptional()
   @IsUrl({ require_tld: false })
   SCAN_MCP_URL?: string;
 

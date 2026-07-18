@@ -14,11 +14,17 @@ interface OllamaResponse {
 export class OllamaService {
   private readonly baseUrl: string;
   private readonly model: string;
+  private readonly numCtx: number;
 
   constructor(config: ConfigService) {
     this.baseUrl =
       config.get<string>('OLLAMA_BASE_URL') ?? 'http://localhost:11434';
     this.model = config.get<string>('OLLAMA_MODEL') ?? 'qwen3:4b';
+    // Ollama's own model default is 4096 tokens, which the system prompt
+    // (tool instructions + conversation history) can now exceed on its own,
+    // causing a hard 400 rather than just running slower - raise it rather
+    // than trim every prompt addition down to fit.
+    this.numCtx = config.get<number>('OLLAMA_NUM_CTX') ?? 8192;
   }
 
   getModel(): string {
@@ -51,6 +57,7 @@ export class OllamaService {
           stream: true,
           messages,
           tools: [this.scanDirectoryTool(), this.searchFilesTool()],
+          options: { num_ctx: this.numCtx },
         }),
       });
     } catch (error) {
@@ -58,8 +65,12 @@ export class OllamaService {
         `Cannot connect to Ollama: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (!response.ok)
-      throw new BadGatewayException(`Ollama returned HTTP ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new BadGatewayException(
+        `Ollama returned HTTP ${response.status}${errorBody ? `: ${errorBody}` : ''}`,
+      );
+    }
     if (!response.body)
       throw new BadGatewayException('Ollama returned an empty stream');
 
@@ -116,23 +127,33 @@ export class OllamaService {
       function: {
         name: 'search_files',
         description:
-          "Recursively search for a file or folder by name when you don't know exactly where it is. Omit `root` to search every allowed location on the machine at once; pass `root` to restrict the search to one location.",
+          "Recursively search for a file or folder by name when you don't know exactly where it is. Omit `root` to search every allowed location on the machine at once; pass `root` to restrict the search to one location. `queries` may be omitted only when `modifiedRange` is given instead, to list everything changed in that time window regardless of name.",
         parameters: {
           type: 'object',
-          required: ['queries'],
           properties: {
             queries: {
               type: 'array',
               items: { type: 'string' },
-              minItems: 1,
               maxItems: 20,
               description:
-                'One or more substrings to match against file/folder names (case-insensitive). A name matches when it contains ANY query (OR). Put alternative words in separate array items.',
+                'One or more substrings to match against file/folder names (case-insensitive). A name matches when it contains ANY query (OR). Put alternative words in separate array items. May be omitted if modifiedRange is given.',
             },
             root: {
               type: 'string',
               description:
                 'Optional absolute path to restrict the search to. Omit to search every allowed root.',
+            },
+            modifiedRange: {
+              type: 'string',
+              enum: [
+                'today',
+                'yesterday',
+                'last_7_days',
+                'last_30_days',
+                'last_90_days',
+              ],
+              description:
+                'Only include files/folders last modified within this rolling window up to now. Pick the closest bucket for whatever the user said (e.g. "last week"/"a few days ago" → last_7_days, "last month" → last_30_days, "this quarter"/"few months ago" → last_90_days).',
             },
           },
         },

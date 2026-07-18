@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { homedir } from 'os';
 import { AgentService, SEARCH_EVERYWHERE_LABEL } from './agent.service';
 import { TasksRepository } from '../tasks/tasks.repository';
 import { TaskEventsService } from '../tasks/task-events.service';
@@ -68,7 +69,13 @@ describe('AgentService', () => {
 
     await flush();
 
-    expect(tasks.addMessage).toHaveBeenCalledWith(task.id, 'assistant', 'Done');
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'assistant',
+      'Done',
+      undefined,
+      undefined,
+    );
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
     expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
       status: 'completed',
@@ -162,6 +169,14 @@ describe('AgentService', () => {
       task.id,
       'assistant',
       'Found files',
+      undefined,
+      [
+        expect.objectContaining({
+          label: 'scan_directory เสร็จแล้ว',
+          detail: 'เสร็จสิ้น',
+          state: 'done',
+        }),
+      ],
     );
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
     expect(events.emit).toHaveBeenCalledWith(task.id, 'completed', {
@@ -278,6 +293,14 @@ describe('AgentService', () => {
       task.id,
       'assistant',
       'ถึงจำนวนขั้นตอนสูงสุดที่กำหนดไว้แล้ว ไม่สามารถดำเนินการต่อได้',
+      undefined,
+      [
+        expect.objectContaining({
+          label: 'scan_directory เสร็จแล้ว',
+          detail: 'เสร็จสิ้น',
+          state: 'done',
+        }),
+      ],
     );
   });
 
@@ -321,6 +344,14 @@ describe('AgentService', () => {
       task.id,
       'assistant',
       'ดำเนินการเสร็จแล้ว',
+      undefined,
+      [
+        expect.objectContaining({
+          label: 'scan_directory เสร็จแล้ว',
+          detail: 'เสร็จสิ้น',
+          state: 'done',
+        }),
+      ],
     );
   });
 
@@ -879,6 +910,421 @@ describe('AgentService', () => {
       });
     });
 
+    it('translates modifiedRange into an exact modifiedAfter ISO boundary computed from the real current time', async () => {
+      const nowSpy = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2026-07-15T12:00:00.000Z').getTime());
+      try {
+        const { agent, mcp, ollama, task } = createAgent();
+        (ollama.chat as jest.Mock)
+          .mockResolvedValueOnce({
+            content: '',
+            toolCalls: [
+              {
+                function: {
+                  name: 'search_files',
+                  arguments: {
+                    queries: ['รายงาน'],
+                    root: 'D:\\my-work',
+                    modifiedRange: 'last_7_days',
+                  },
+                },
+              },
+            ],
+          })
+          .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+        (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+        agent.start(task.id, 'find recent reports');
+        await flush();
+
+        expect(mcp.searchFiles).toHaveBeenCalledWith({
+          queries: ['รายงาน'],
+          root: 'D:\\my-work',
+          maxResults: undefined,
+          maxDepth: undefined,
+          modifiedAfter: '2026-07-08T12:00:00.000Z',
+        });
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('omits modifiedAfter when modifiedRange is not a recognized bucket', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['รายงาน'],
+                  root: 'D:\\my-work',
+                  modifiedRange: 'sometime',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find reports');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['รายงาน'],
+        root: 'D:\\my-work',
+        maxResults: undefined,
+        maxDepth: undefined,
+        modifiedAfter: undefined,
+      });
+    });
+
+    it('allows omitting queries when modifiedRange is given, searching everywhere for anything changed in that window', async () => {
+      const { agent, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            { function: { name: 'search_files', arguments: { modifiedRange: 'today' } } },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-time',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-time',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-time',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'what changed today');
+      await flush();
+      agent.resolvePermission(task.id, 'perm-time', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ queries: [], root: undefined, maxResults: 20 }),
+      );
+    });
+
+    it('respects an explicit maxResults instead of the date-only-search default', async () => {
+      const { agent, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { modifiedRange: 'today', maxResults: 5 },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-time-2',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-time-2',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-time-2',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'what changed today');
+      await flush();
+      agent.resolvePermission(task.id, 'perm-time-2', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ maxResults: 5 }),
+      );
+    });
+
+    it('adds the English name and forces a search-everywhere when the model queries a Windows special folder by its Thai nickname, ignoring whatever root it guessed', async () => {
+      const { agent, tasks, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                // the model wrongly guessed the special folder lives inside
+                // the workspace - that guess must be discarded
+                arguments: {
+                  queries: ['ดาวโหลด'],
+                  root: 'D:\\my-work',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-folder',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-folder',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-folder',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find my downloads');
+      await flush();
+
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+      expect(mcp.searchFiles).not.toHaveBeenCalled();
+
+      agent.resolvePermission(task.id, 'perm-folder', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['ดาวโหลด', 'Downloads'],
+        root: undefined,
+        maxResults: undefined,
+        maxDepth: undefined,
+      });
+    });
+
+    it('still forces a search-everywhere if the model already included the English name itself', async () => {
+      const { agent, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['ดาวน์โหลด', 'Downloads'],
+                  root: 'D:\\my-work',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-folder-2',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-folder-2',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-folder-2',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find my downloads');
+      await flush();
+      agent.resolvePermission(task.id, 'perm-folder-2', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['ดาวน์โหลด', 'Downloads'],
+        root: undefined,
+        maxResults: undefined,
+        maxDepth: undefined,
+      });
+    });
+
+    it('scopes into the special folder\'s real path (dropping the folder name from queries) when the model combines it with a date filter, instead of treating the name as a filename to search for', async () => {
+      const { agent, tasks, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['ดาวโหลด', 'Downloads'],
+                  modifiedRange: 'last_30_days',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-scoped',
+        taskId: task.id,
+        path: `${homedir()}\\Downloads`,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-scoped',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-scoped',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'what changed in downloads last month');
+      await flush();
+
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+
+      agent.resolvePermission(task.id, 'perm-scoped', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queries: [],
+          root: `${homedir()}\\Downloads`,
+        }),
+      );
+    });
+
+    it('scopes a name search into the special folder\'s real path when another real search term is combined with it', async () => {
+      const { agent, mcp, ollama, permissions, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['ดาวโหลด', 'รายงาน'] },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-scoped-2',
+        taskId: task.id,
+        path: `${homedir()}\\Downloads`,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+      (permissions.findOne as jest.Mock).mockReturnValue({
+        id: 'perm-scoped-2',
+        taskId: task.id,
+      });
+      (permissions.resolve as jest.Mock).mockReturnValue({
+        id: 'perm-scoped-2',
+        taskId: task.id,
+        status: 'allowed',
+      });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'find report in downloads');
+      await flush();
+      agent.resolvePermission(task.id, 'perm-scoped-2', true);
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queries: ['รายงาน'],
+          root: `${homedir()}\\Downloads`,
+        }),
+      );
+    });
+
+    it('treats a non-absolute root as omitted and searches everywhere instead of passing it through', async () => {
+      const { agent, tasks, events, permissions, ollama, mcp, task } =
+        createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'search_files',
+              arguments: { queries: ['ดาวโหลด'], root: 'Downloads' },
+            },
+          },
+        ],
+      });
+      (permissions.create as jest.Mock).mockReturnValue({
+        id: 'perm-bad-root',
+        taskId: task.id,
+        path: SEARCH_EVERYWHERE_LABEL,
+        action: 'read_directory',
+        access: 'read',
+        status: 'pending',
+        createdAt: 'now',
+      });
+
+      agent.start(task.id, 'find my downloads');
+      await flush();
+
+      expect(permissions.create).toHaveBeenCalledWith(
+        task.id,
+        SEARCH_EVERYWHERE_LABEL,
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(
+        task.id,
+        'waiting_permission',
+      );
+      expect(events.emit).toHaveBeenCalledWith(task.id, 'permission_required', {
+        permission: expect.objectContaining({ id: 'perm-bad-root' }),
+      });
+      expect(mcp.searchFiles).not.toHaveBeenCalled();
+    });
+
     it('requires permission when an explicit root falls outside the workspace', async () => {
       const { agent, tasks, permissions, ollama, task } = createAgent();
       (ollama.chat as jest.Mock).mockResolvedValue({
@@ -910,6 +1356,49 @@ describe('AgentService', () => {
         task.id,
         'waiting_permission',
       );
+    });
+  });
+
+  describe('file link rendering', () => {
+    type Linkifier = {
+      linkifyFilePaths: (
+        content: string,
+        messages: Array<{ role: string; content: string }>,
+      ) => string;
+    };
+
+    it('turns file paths returned by tools into encoded Markdown links', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const path = 'C:\\Reports\\Q1 (final).txt';
+
+      const result = linkifier.linkifyFilePaths(`Open \`${path}\``, [
+        {
+          role: 'tool',
+          content: JSON.stringify({
+            entries: [{ name: 'Q1 [final].txt', path }],
+          }),
+        },
+      ]);
+
+      expect(result).toBe(
+        'Open [Q1 \\[final\\].txt](http://localhost:3200/api/files/open?path=C%3A%5CReports%5CQ1%20(final).txt)',
+      );
+    });
+
+    it('ignores non-tool, malformed, and incomplete tool messages', () => {
+      const { agent } = createAgent();
+      const linkifier = agent as unknown as Linkifier;
+      const content = 'Keep this unchanged';
+
+      expect(
+        linkifier.linkifyFilePaths(content, [
+          { role: 'assistant', content: '{"entries":[]}' },
+          { role: 'tool', content: 'not json' },
+          { role: 'tool', content: 'null' },
+          { role: 'tool', content: '{"matches":[null,{}, {"name":1,"path":2}]}' },
+        ]),
+      ).toBe(content);
     });
   });
 });

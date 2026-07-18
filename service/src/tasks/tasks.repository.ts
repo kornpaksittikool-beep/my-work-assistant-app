@@ -5,6 +5,7 @@ import {
   ChatMessage,
   MessageRole,
   TaskStatus,
+  ToolActivityEntry,
 } from './task.types';
 
 @Injectable()
@@ -43,6 +44,7 @@ export class TasksRepository {
     role: MessageRole,
     content: string,
     toolName?: string,
+    toolCalls?: ToolActivityEntry[],
   ): ChatMessage {
     const task = this.findOne(taskId);
     const message: ChatMessage = {
@@ -50,6 +52,7 @@ export class TasksRepository {
       role,
       content,
       toolName,
+      toolCalls,
       createdAt: new Date().toISOString(),
     };
     task.messages.push(message);

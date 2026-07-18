@@ -6,6 +6,14 @@ export function setupSwagger(app: INestApplication): void {
     .setTitle('Assistant Service API')
     .setDescription('Agent Service REST API Documentation')
     .setVersion('1.0.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+      'JWT-auth',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

@@ -2,7 +2,7 @@
 @plugin '@tailwindcss/typography';
 
 @theme {
-  --font-sans: 'Noto Sans Thai', 'Segoe UI', sans-serif;
+  --font-sans: 'Kanit', 'Segoe UI', sans-serif;
   --color-app-bg: #0c0e12;
   --color-sidebar: #0a0c10;
   --color-surface: #11141a;

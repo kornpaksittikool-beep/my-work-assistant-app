@@ -8,6 +8,10 @@ export interface ChatMessage {
   content: string;
   createdAt: string;
   toolName?: string;
+  /** Tool calls/permission decisions made while generating this message
+   * (assistant messages only) - persisted so the history keeps showing them,
+   * unlike the transient `activities` feed which only tracks the live run. */
+  toolCalls?: ActivityItem[];
 }
 
 export interface AssistantTask {

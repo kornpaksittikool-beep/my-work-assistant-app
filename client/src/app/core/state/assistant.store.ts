@@ -171,6 +171,10 @@ export class AssistantStore {
     } else if (event.type === 'message') {
       this.clearStreamingText();
       this.appendMessage(payload['message'] as ChatMessage);
+      // The message now carries its own toolCalls log, so the live feed
+      // used while this turn was in progress is redundant - drop it rather
+      // than leaving it to linger under the finished message.
+      this.activities.set([]);
     } else if (event.type === 'completed') {
       this.clearStreamingText();
       this.stopWorkTimer();

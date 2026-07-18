@@ -15,6 +15,19 @@
             class="min-w-0"
             [class]="message.role === 'user' ? 'max-w-[68%] rounded-2xl bg-surface-3 px-4 py-2.5 shadow-[0_1px_0_rgba(255,255,255,.03)] max-[620px]:max-w-[88%]' : 'w-full max-w-[720px]'"
           >
+            @if (message.toolCalls?.length) {
+              <details class="mb-1.5 text-[12px] text-faint">
+                <summary class="cursor-pointer select-none marker:text-[10px] hover:text-muted">ใช้ {{ message.toolCalls!.length }} tools</summary>
+                <div class="mt-1 mb-0.5 flex flex-col gap-[3px] border-l border-edge pl-2.5">
+                  @for (call of message.toolCalls; track call.id) {
+                    <div class="flex items-center gap-1.5 text-muted">
+                      <span [class]="call.state === 'done' ? 'text-success' : 'text-danger'">{{ call.state === 'done' ? '✓' : '✕' }}</span>
+                      <span>{{ call.label }}</span>
+                    </div>
+                  }
+                </div>
+              </details>
+            }
             <div
               class="prose prose-invert max-w-none break-words text-[13px] leading-[1.65] text-[#e3e6ec] prose-p:my-1.5 prose-headings:my-2 prose-headings:text-content prose-strong:text-content prose-a:text-accent prose-code:text-[#e3e6ec] prose-pre:bg-surface-2 prose-blockquote:border-edge-strong prose-blockquote:text-muted prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-hr:border-edge first:prose-p:mt-0 last:prose-p:mb-0"
               [innerHTML]="message.content | markdown"

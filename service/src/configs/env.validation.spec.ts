@@ -22,4 +22,13 @@ describe('validate (env)', () => {
   it('throws when PORT is out of range', () => {
     expect(() => validate({ PORT: '70000' })).toThrow();
   });
+
+  it('passes with a valid OLLAMA_NUM_CTX', () => {
+    const result = validate({ OLLAMA_NUM_CTX: '8192' });
+    expect(result.OLLAMA_NUM_CTX).toBe(8192);
+  });
+
+  it('throws when OLLAMA_NUM_CTX is below the minimum', () => {
+    expect(() => validate({ OLLAMA_NUM_CTX: '100' })).toThrow();
+  });
 });

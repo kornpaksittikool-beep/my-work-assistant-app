@@ -8,12 +8,24 @@ export type TaskStatus =
   | 'failed';
 export type MessageRole = 'user' | 'assistant' | 'tool';
 
+export interface ToolActivityEntry {
+  id: string;
+  label: string;
+  detail: string;
+  state: 'done' | 'failed';
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
   createdAt: string;
   toolName?: string;
+  /** Tool calls/permission decisions that happened while generating this
+   * message, attached so the history keeps showing them after the run ends
+   * (rather than only in the transient live-activity feed). Only set on
+   * 'assistant' messages. */
+  toolCalls?: ToolActivityEntry[];
 }
 
 export interface AssistantTask {

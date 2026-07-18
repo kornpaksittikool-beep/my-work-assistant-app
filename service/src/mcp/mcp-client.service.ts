@@ -15,6 +15,8 @@ export interface SearchFilesArgs {
   root?: string;
   maxResults?: number;
   maxDepth?: number;
+  modifiedAfter?: string;
+  modifiedBefore?: string;
 }
 
 @Injectable()
