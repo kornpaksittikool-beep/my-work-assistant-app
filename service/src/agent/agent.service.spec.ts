@@ -10,6 +10,7 @@ import { OllamaService } from '../ollama/ollama.service';
 import { McpClientService } from '../mcp/mcp-client.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { AssistantTask } from '../tasks/task.types';
+import { OllamaChatMessage } from '../ollama/ollama.types';
 import {
   FILE_CONTENT_UNAVAILABLE_RESPONSE,
   UNVERIFIED_FILE_RESPONSE,
@@ -213,6 +214,42 @@ describe('AgentService', () => {
       status: 'completed',
       stepsUsed: 2,
     });
+  });
+
+  it('redirects a scan_directory call to a recursive search_files when the user asked for a specific file type', async () => {
+    const { agent, tasks, ollama, mcp, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'scan_directory',
+              arguments: { path: 'D:\\my-work\\src' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'No PDFs found', toolCalls: [] });
+    (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+    agent.start(task.id, 'หาไฟล์ .pdf ใน D:\\my-work\\src หน่อย');
+    await flush();
+
+    expect(mcp.scanDirectory).not.toHaveBeenCalled();
+    expect(mcp.searchFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queries: [],
+        root: 'D:\\my-work\\src',
+        extensions: ['.pdf'],
+      }),
+    );
+    expect(tasks.addMessage).toHaveBeenCalledWith(
+      task.id,
+      'tool',
+      JSON.stringify({ matches: [] }),
+      'search_files',
+    );
   });
 
   it('keeps looping across multiple sequential tool calls until the model stops asking for one', async () => {
@@ -829,6 +866,84 @@ describe('AgentService', () => {
       expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
     });
 
+    it('nudges the model to retry with shorter root words when a Thai-query search comes back empty', async () => {
+      const { agent, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['หนี้สิน'], root: 'D:\\my-work\\docs' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ไม่พบไฟล์', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หาไฟล์หนี้สิน');
+      await flush();
+
+      const chatMock = ollama.chat as jest.Mock<
+        Promise<{ content: string; toolCalls: unknown[] }>,
+        [OllamaChatMessage[]]
+      >;
+      const secondCallMessages = chatMock.mock.calls[1][0];
+      expect(
+        secondCallMessages.some(
+          (message) =>
+            message.role === 'system' && message.content.includes('หนี้สิน'),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not nudge a second time once the model already got the empty-search retry this turn', async () => {
+      const { agent, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['หนี้สิน'], root: 'D:\\my-work\\docs' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: { queries: ['หนี้'], root: 'D:\\my-work\\docs' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ไม่พบไฟล์', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หาไฟล์หนี้สิน');
+      await flush();
+      await flush();
+
+      const chatMock = ollama.chat as jest.Mock<
+        Promise<{ content: string; toolCalls: unknown[] }>,
+        [OllamaChatMessage[]]
+      >;
+      const thirdCallMessages = chatMock.mock.calls[2][0];
+      const nudgeCount = thirdCallMessages.filter(
+        (message) =>
+          message.role === 'system' &&
+          message.content.includes('(ระบบแนะนำให้ลองแยกคำ)'),
+      ).length;
+      expect(nudgeCount).toBe(1);
+    });
+
     it('passes through numeric maxResults/maxDepth arguments', async () => {
       const { agent, mcp, ollama, task } = createAgent();
       (ollama.chat as jest.Mock)
@@ -1111,6 +1226,40 @@ describe('AgentService', () => {
         maxResults: 25,
         maxDepth: undefined,
         modifiedAfter: undefined,
+      });
+    });
+
+    it('ignores a valid modifiedRange the model attached when the user never mentioned time at all', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'search_files',
+                arguments: {
+                  queries: ['หนี้'],
+                  root: 'D:\\my-work',
+                  modifiedRange: 'today',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(task.id, 'หาไฟล์ หนี้ ของฉันให้หน่อย ฉันจำไม่ได้ว่าเก็บไว้ไหนอะ');
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith({
+        queries: ['หนี้'],
+        root: 'D:\\my-work',
+        maxResults: 25,
+        maxDepth: undefined,
+        modifiedAfter: undefined,
+        modifiedBefore: undefined,
       });
     });
 
@@ -2053,6 +2202,36 @@ describe('AgentService', () => {
       undefined,
     );
     expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+  });
+
+  it('caps read_file at a model-facing default maxBytes when the model omits it, instead of the tool\'s own larger default', async () => {
+    const { agent, mcp, ollama, task } = createAgent();
+    (ollama.chat as jest.Mock)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            function: {
+              name: 'read_file',
+              arguments: { path: 'D:\\my-work\\README.md' },
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+    (mcp.readFile as jest.Mock).mockResolvedValue({
+      path: 'D:\\my-work\\README.md',
+      content: '# Project',
+      truncated: false,
+    });
+
+    agent.start(task.id, 'อ่าน README.md');
+    await flush();
+
+    expect(mcp.readFile).toHaveBeenCalledWith(
+      'D:\\my-work\\README.md',
+      6 * 1024,
+    );
   });
 
   it('executes read_file and allows a content summary only after real content is returned', async () => {

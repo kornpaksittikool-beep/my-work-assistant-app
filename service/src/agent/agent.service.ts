@@ -63,6 +63,13 @@ const MODIFIED_RANGE_DAYS: Record<string, number> = {
   last_90_days: 90,
 };
 
+/** Matches the user's own words plausibly asking about a modification-time
+ * window - gates whether the model's search_files.modifiedRange choice gets
+ * honored at all (see resolveTarget()), since a small model sometimes
+ * attaches it to a plain name search that never mentioned time. */
+const DATE_TIME_INTENT_PATTERN =
+  /วันนี้|เมื่อวาน|วันที่|สัปดาห์|อาทิตย์|เดือน|(?<!\S)ปี(?!\S)|ย้อนหลัง|ล่าสุด|ช่วง(?:เวลา|นี้)|\btoday\b|\byesterday\b|\bthis week\b|\blast week\b|\bthis month\b|\blast month\b|\brecent(?:ly)?\b|\b\d+\s*(?:days?|weeks?|months?|years?)\b|\bdate\b/i;
+
 /**
  * Default search_files maxResults on the model-facing path only, when the
  * model didn't specify one itself - the underlying SearchService default
@@ -72,6 +79,30 @@ const MODIFIED_RANGE_DAYS: Record<string, number> = {
  * 11683 tokens against an 8192-token context, failing the turn outright).
  */
 const DEFAULT_MODEL_FACING_MAX_RESULTS = 25;
+
+/**
+ * Default read_file maxBytes on the model-facing path only, when the model
+ * didn't specify one itself - the underlying ReadService default (64 KB, see
+ * 1-scan-file) is sized for the tool's own byte cap, not for what safely
+ * fits in a small local model's context window alongside the rest of the
+ * conversation (observed directly: 42 KB of extracted text alone came to
+ * 20661 tokens against the 8192-token num_ctx and made Ollama reject the
+ * request outright, failing the whole task; even a first attempt at 12 KB
+ * still came to 8577 tokens once the ~2900-token system prompt was added,
+ * still over budget). Numeric-heavy extracted content (e.g. a spreadsheet
+ * dump of dates/times as raw decimals) tokenizes far more densely than
+ * plain prose - roughly 0.4 tokens/byte was observed here - so this is
+ * sized for that worst case rather than assuming English-prose density.
+ * Still an imperfect proxy for token count, but it's the same defensive
+ * lever the tool already exposes, matching the DEFAULT_MODEL_FACING_MAX_RESULTS
+ * precedent for search_files below.
+ */
+const DEFAULT_MODEL_FACING_MAX_BYTES = 6 * 1024;
+
+/** Stable substring embedded in the empty-Thai-search retry nudge (see
+ * emptyThaiNameSearchQueries()) so a second empty result in the same turn is
+ * accepted normally instead of nudging the model forever. */
+const THAI_EMPTY_SEARCH_NUDGE_MARKER = '(ระบบแนะนำให้ลองแยกคำ)';
 
 /** Every recognized name/nickname (Thai or English) for a special folder, used to detect a match regardless of whether expansion actually needed to add anything. */
 const SPECIAL_FOLDER_NAMES = new Set([
@@ -457,8 +488,18 @@ export class AgentService {
     if (toolName === 'read_file') {
       const path =
         typeof rawArgs.path === 'string' ? rawArgs.path : workspacePath;
+      // read_file's own default (64 KB, see 1-scan-file's ReadService) is
+      // sized for the tool's own byte cap, not for what fits in the model's
+      // context window - observed directly: a real 127 KB .xlsx extracted to
+      // 42 KB of mostly-numeric text, which alone came to 20661 tokens and
+      // made Ollama reject the whole request outright (context window
+      // exceeded), failing the task with a raw HTTP error instead of a
+      // graceful response. Only fall back to this smaller model-facing
+      // default when the model didn't ask for a specific size itself.
       const maxBytes =
-        typeof rawArgs.maxBytes === 'number' ? rawArgs.maxBytes : undefined;
+        typeof rawArgs.maxBytes === 'number'
+          ? rawArgs.maxBytes
+          : DEFAULT_MODEL_FACING_MAX_BYTES;
       return {
         toolName: 'read_file',
         toolArgs: { path, maxBytes },
@@ -469,6 +510,31 @@ export class AgentService {
     if (toolName === 'scan_directory') {
       const path =
         typeof rawArgs.path === 'string' ? rawArgs.path : workspacePath;
+      // scan_directory only ever lists what's directly under `path` - the
+      // model sometimes calls it anyway when the user actually asked for
+      // files of a specific type somewhere inside a folder it already knows
+      // (e.g. "หาไฟล์ .pdf ใน G:\My Drive"), silently missing every match in
+      // a subfolder and then confidently reporting none exist (observed
+      // directly). Extension intent detected from the user's own words means
+      // a recursive search_files scoped to that same path is what's actually
+      // needed, not a shallow listing.
+      const impliedExtensions = this.resolveExtensions(
+        undefined,
+        lastUserMessage,
+      );
+      if (impliedExtensions.length > 0) {
+        return {
+          toolName: 'search_files',
+          toolArgs: {
+            queries: [],
+            root: path,
+            extensions: impliedExtensions,
+            maxResults: DEFAULT_MODEL_FACING_MAX_RESULTS,
+          },
+          displayPath: path,
+          requiresPermission: !this.isWithin(path, workspacePath),
+        };
+      }
       return {
         toolName: 'scan_directory',
         toolArgs: { path },
@@ -489,9 +555,20 @@ export class AgentService {
             !this.isExtensionOnlyQuery(query, extensions),
         )
       : [];
-    const { modifiedAfter, modifiedBefore } = this.resolveModifiedRange(
-      rawArgs.modifiedRange,
-    );
+    // The model sometimes attaches modifiedRange (e.g. "today") to a plain
+    // name search even when the user's own message never mentioned time at
+    // all (observed directly: "หาไฟล์ หนี้ ของฉันให้หน่อย ฉันจำไม่ได้ว่าเก็บ
+    // ไว้ไหนอะ" got modifiedRange: 'today' attached, silently excluding a
+    // real match last modified weeks earlier - the model still confidently
+    // reported "not found" with no hint a date filter was ever involved).
+    // Only honor it when the user's own words plausibly reference a
+    // date/time window; otherwise the model's choice is very likely spurious
+    // and would silently narrow the search in a way nobody asked for.
+    const { modifiedAfter, modifiedBefore } = DATE_TIME_INTENT_PATTERN.test(
+      lastUserMessage ?? '',
+    )
+      ? this.resolveModifiedRange(rawArgs.modifiedRange)
+      : {};
     // The model occasionally puts a special folder's name in `queries`
     // itself (e.g. queries: ["ดาวโหลด"]) rather than using it to say WHERE
     // to look. Once other real search terms remain, or a date filter is
@@ -686,7 +763,54 @@ export class AgentService {
         content: modelToolContent,
       },
     ];
+    // A literal-substring search_files query for a Thai compound word (e.g.
+    // "หนี้สิน") finds nothing when the real filename only contains one root
+    // of it (e.g. "เก็บเงินเครียหนี้.gsheet" has "หนี้" but not "หนี้สิน") -
+    // observed directly: the system prompt already tells the model to split
+    // compounds into shorter root words/synonyms, but a small local model
+    // doesn't reliably do that on the first try and just reports "not found"
+    // once it sees an empty match list. Nudge it once to retry with the
+    // compound split apart before it settles on that answer; the marker
+    // string lets a second empty result still get accepted normally instead
+    // of nudging forever.
+    const emptyThaiQueries = this.emptyThaiNameSearchQueries(
+      pending,
+      result,
+      toolFailed,
+    );
+    if (
+      emptyThaiQueries &&
+      !pending.messages.some(
+        (message) =>
+          message.role === 'system' &&
+          message.content.includes(THAI_EMPTY_SEARCH_NUDGE_MARKER),
+      )
+    ) {
+      nextMessages.push({
+        role: 'system',
+        content: `การค้นหา ${emptyThaiQueries.map((query) => `"${query}"`).join(', ')} ด้วย search_files ไม่พบผลลัพธ์เลย ${THAI_EMPTY_SEARCH_NUDGE_MARKER} - คำนี้อาจเป็นคำผสมที่ไม่ได้ปรากฏในชื่อไฟล์จริงแบบคำเดียวกันเป๊ะๆ เพราะ search_files จับคู่แบบตัวอักษรตรงตัวเท่านั้น ไม่มีการตัดคำ ลองแยกเป็นคำย่อยหรือคำพ้องความหมายที่สั้นลงเป็น query แยกกันหลายคำ (เช่น คำหลักแต่ละคำ) แล้วเรียก search_files อีกครั้งในรอบนี้ ก่อนสรุปว่าไม่พบไฟล์`,
+      });
+    }
     await this.step(task.id, nextMessages, pending.stepNumber + 1);
+  }
+
+  /**
+   * Returns the Thai-script queries responsible for a zero-match
+   * search_files result (a plain name search, not a date/extension-only
+   * lookup), or null when the nudge above doesn't apply.
+   */
+  private emptyThaiNameSearchQueries(
+    pending: PendingToolRun,
+    result: unknown,
+    toolFailed: boolean,
+  ): string[] | null {
+    if (toolFailed || pending.toolName !== 'search_files') return null;
+    const matches = (result as { matches?: unknown[] } | null)?.matches;
+    if (!Array.isArray(matches) || matches.length > 0) return null;
+    const thaiQueries = pending.toolArgs.queries.filter((query) =>
+      /[฀-๿]/.test(query),
+    );
+    return thaiQueries.length > 0 ? thaiQueries : null;
   }
 
   private complete(taskId: string, content: string, stepsUsed: number): void {
