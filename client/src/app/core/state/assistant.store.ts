@@ -32,6 +32,14 @@ export class AssistantStore {
   readonly activeTaskTitle = computed(() => this.activeTask()?.title ?? 'งานใหม่');
   readonly messages = computed(() => this.activeTask()?.messages.filter((message) => message.role !== 'tool') ?? []);
   readonly isWorking = computed(() => this.activeTask()?.status === 'working');
+  readonly canDeleteChat = computed(() => {
+    const task = this.activeTask();
+    return (
+      !!task &&
+      task.status !== 'working' &&
+      task.status !== 'waiting_permission'
+    );
+  });
   readonly currentWork = computed(() => {
     if (this.pendingPermission()) return { label: 'กำลังรอการอนุญาต', detail: 'เลือกอนุญาตหรือปฏิเสธเพื่อทำงานต่อ' };
     if (this.streamingText()) return { label: 'กำลังสร้างคำตอบ', detail: 'กำลังรับข้อความจากโมเดล' };
