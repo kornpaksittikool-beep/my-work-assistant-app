@@ -54,11 +54,39 @@ const MODIFIED_RANGE_DAYS: Record<string, number> = {
   last_90_days: 90,
 };
 
+/**
+ * Default search_files maxResults on the model-facing path only, when the
+ * model didn't specify one itself - the underlying SearchService default
+ * (100, see 1-scan-file) is fine for a direct API caller but too large to
+ * safely hand back into the model's own context window (observed directly:
+ * 100 long absolute paths from one broad search blew a request out to
+ * 11683 tokens against an 8192-token context, failing the turn outright).
+ */
+const DEFAULT_MODEL_FACING_MAX_RESULTS = 25;
+
 /** Every recognized name/nickname (Thai or English) for a special folder, used to detect a match regardless of whether expansion actually needed to add anything. */
 const SPECIAL_FOLDER_NAMES = new Set([
   ...Object.keys(SPECIAL_FOLDER_TRANSLATIONS),
   ...Object.values(SPECIAL_FOLDER_TRANSLATIONS),
 ]);
+
+/**
+ * Guards against a small model answering "not found"/"no access" without
+ * ever calling scan_directory or search_files (observed directly: a
+ * relative folder name like "assistant-app" got refused outright with zero
+ * tool calls, and a lookup for a nonexistent file got "not found" also with
+ * zero tool calls - the second one happened to be right, but only by luck,
+ * since it never actually checked). step() retries once with an explicit
+ * nudge when the latest user message looks like a file/folder lookup
+ * (matches LOOKUP_INTENT_PATTERN) and doesn't also look like a mutation
+ * request (matches MUTATION_INTENT_PATTERN) that no tool supports anyway -
+ * e.g. "delete this file" should still get refused outright rather than
+ * forced into a pointless retry.
+ */
+const LOOKUP_INTENT_PATTERN =
+  /ไฟล์|โฟลเดอร์|เอกสาร|หา|ค้นหา|ดู|สแกน|มีอะไร|อยู่ที่ไหน|\bfile\b|\bfolder\b|\bdirectory\b|\bfind\b|\bsearch\b|\bscan\b|\blist\b|\bshow\b/i;
+const MUTATION_INTENT_PATTERN =
+  /ลบ|แก้ไข|เปลี่ยน|สร้าง|ย้าย|คัดลอก|เขียน|บันทึก|\bdelete\b|\bremove\b|\bedit\b|\bmodify\b|\bwrite\b|\bcreate\b|\brename\b|\bmove\b|\bcopy\b/i;
 
 /**
  * Absolute path for each special folder on this machine, computed from the
@@ -189,7 +217,12 @@ export class AgentService {
     this.pendingRuns.delete(permissionId);
     if (!pending) return;
     if (!allowed) {
-      this.recordActivity(permission.taskId, 'ปฏิเสธการเข้าถึง', 'เสร็จสิ้น');
+      this.recordActivity(
+        permission.taskId,
+        'ปฏิเสธการเข้าถึง',
+        'เสร็จสิ้น',
+        'permission',
+      );
       this.tasks.setStatus(permission.taskId, 'stopped');
       this.events.emit(permission.taskId, 'status', {
         status: 'stopped',
@@ -197,7 +230,12 @@ export class AgentService {
       });
       return;
     }
-    this.recordActivity(permission.taskId, 'อนุญาตการอ่านแล้ว', 'เสร็จสิ้น');
+    this.recordActivity(
+      permission.taskId,
+      'อนุญาตการอ่านแล้ว',
+      'เสร็จสิ้น',
+      'permission',
+    );
     this.tasks.setStatus(permission.taskId, 'working');
     void this.executeTool(pending).catch((error: unknown) =>
       this.fail(permission.taskId, error),
@@ -225,6 +263,7 @@ export class AgentService {
     taskId: string,
     messages: OllamaChatMessage[],
     stepNumber: number,
+    retriedNoTool = false,
   ): Promise<void> {
     const task = this.tasks.findOne(taskId);
     if (task.status === 'stopped') return;
@@ -239,6 +278,18 @@ export class AgentService {
     );
 
     if (!call) {
+      if (!retriedNoTool && this.shouldForceToolRetry(taskId, messages)) {
+        this.events.emit(taskId, 'status', {
+          status: 'working',
+          text: 'กำลังตรวจสอบอีกครั้ง',
+        });
+        const nudge: OllamaChatMessage = {
+          role: 'system',
+          content: `คุณตอบคำถามล่าสุดโดยไม่ได้เรียก scan_directory หรือ search_files เลย ห้ามสรุปว่า "ไม่พบ" หรือ "ไม่มีสิทธิ์เข้าถึง" ก่อนเรียกเครื่องมือที่เกี่ยวข้องจริงเสมอ ถ้าชื่อโฟลเดอร์ที่ผู้ใช้พูดถึงเป็นชื่อสั้น ๆ ไม่ใช่ absolute path (เช่น "assistant-app") ให้ต่อกับ workspace path ที่รู้อยู่แล้ว (${task.workspacePath}) ให้เป็น absolute path เองก่อนเรียก scan_directory ตอนนี้เรียกเครื่องมือที่เหมาะสมแล้วตอบคำถามล่าสุดของผู้ใช้ใหม่อีกครั้ง`,
+        };
+        await this.step(taskId, [...messages, nudge], stepNumber, true);
+        return;
+      }
       const content = this.linkifyFilePaths(
         result.content || 'ดำเนินการเสร็จแล้ว',
         messages,
@@ -279,6 +330,24 @@ export class AgentService {
     }
 
     await this.executeTool(pending);
+  }
+
+  private shouldForceToolRetry(
+    taskId: string,
+    messages: OllamaChatMessage[],
+  ): boolean {
+    const usedRealTool = (this.toolActivity.get(taskId) ?? []).some(
+      (entry) => entry.kind === 'tool',
+    );
+    if (usedRealTool) return false;
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'user');
+    if (!lastUserMessage) return false;
+    return (
+      LOOKUP_INTENT_PATTERN.test(lastUserMessage.content) &&
+      !MUTATION_INTENT_PATTERN.test(lastUserMessage.content)
+    );
   }
 
   private resolveTarget(
@@ -354,16 +423,16 @@ export class AgentService {
     }
     const rawMaxResults =
       typeof rawArgs.maxResults === 'number' ? rawArgs.maxResults : undefined;
-    // A name-less "list everything changed recently" search can easily hit
-    // the (much larger) default maxResults from the search tool itself,
-    // handing the model a wall of JSON it then has to summarize - a small
-    // model reliably garbles that (e.g. claims nothing was found even when
-    // the tool result clearly lists matches). Keep the default list short
-    // enough to actually summarize correctly, unless the model asked for a
-    // specific size itself.
-    const maxResults =
-      rawMaxResults ??
-      (queries.length === 0 && modifiedAfter ? 20 : undefined);
+    // Any search_files call without an explicit maxResults can hit the
+    // (much larger) default from the search tool itself, handing the model
+    // a wall of JSON - observed directly: a single broad word ("test")
+    // searched across every allowed root returned enough long absolute
+    // paths to blow a request out to 11683 tokens against an 8192-token
+    // context window, failing the whole turn outright (not just garbling
+    // the summary, as the name-less date-search case below already knew
+    // about). truncated:true still tells the model more exist, so it can
+    // ask to narrow the search rather than the request just failing.
+    const maxResults = rawMaxResults ?? DEFAULT_MODEL_FACING_MAX_RESULTS;
     const toolArgs: SearchFilesArgs = {
       queries,
       root,
@@ -407,7 +476,12 @@ export class AgentService {
       path: pending.displayPath,
       result,
     });
-    this.recordActivity(task.id, `${pending.toolName} เสร็จแล้ว`, 'เสร็จสิ้น');
+    this.recordActivity(
+      task.id,
+      `${pending.toolName} เสร็จแล้ว`,
+      'เสร็จสิ้น',
+      'tool',
+    );
     const nextMessages: OllamaChatMessage[] = [
       ...pending.messages,
       { role: 'tool', tool_name: pending.toolName, content: toolContent },
@@ -441,9 +515,14 @@ export class AgentService {
     });
   }
 
-  private recordActivity(taskId: string, label: string, detail: string): void {
+  private recordActivity(
+    taskId: string,
+    label: string,
+    detail: string,
+    kind: 'tool' | 'permission',
+  ): void {
     const list = this.toolActivity.get(taskId) ?? [];
-    list.push({ id: randomUUID(), label, detail, state: 'done' });
+    list.push({ id: randomUUID(), label, detail, state: 'done', kind });
     this.toolActivity.set(taskId, list);
   }
 
@@ -520,9 +599,7 @@ export class AgentService {
         (translated): translated is string =>
           !!translated && !queries.includes(translated),
       );
-    return additions.length
-      ? [...queries, ...new Set(additions)]
-      : queries;
+    return additions.length ? [...queries, ...new Set(additions)] : queries;
   }
 
   private isWithin(candidate: string, root: string): boolean {

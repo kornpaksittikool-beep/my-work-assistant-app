@@ -23,7 +23,30 @@ describe('AgentService', () => {
       updatedAt: 'now',
     };
     const tasks = {
-      addMessage: jest.fn(),
+      // Mirrors the real repository's behaviour of appending to the task's
+      // own message list - shouldForceToolRetry() reads the latest user
+      // message back off of it (via run()'s task.messages snapshot), so a
+      // no-op mock would never see the message agent.start() just added.
+      addMessage: jest.fn(
+        (
+          _taskId: string,
+          role: string,
+          content: string,
+          toolName?: string,
+          toolCalls?: unknown,
+        ) => {
+          const message = {
+            id: `msg-${task.messages.length}`,
+            role,
+            content,
+            toolName,
+            toolCalls,
+            createdAt: 'now',
+          };
+          task.messages.push(message as never);
+          return message;
+        },
+      ),
       setStatus: jest.fn(),
       findOne: jest.fn().mockReturnValue(task),
     } as unknown as TasksRepository;
@@ -747,7 +770,7 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: ['หนี้'],
         root: 'D:\\my-work\\docs',
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
       });
       expect(tasks.addMessage).toHaveBeenCalledWith(
@@ -815,7 +838,7 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: [],
         root: 'D:\\my-work',
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
       });
     });
@@ -905,7 +928,7 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: ['หนี้'],
         root: undefined,
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
       });
     });
@@ -941,7 +964,7 @@ describe('AgentService', () => {
         expect(mcp.searchFiles).toHaveBeenCalledWith({
           queries: ['รายงาน'],
           root: 'D:\\my-work',
-          maxResults: undefined,
+          maxResults: 25,
           maxDepth: undefined,
           modifiedAfter: '2026-07-08T12:00:00.000Z',
         });
@@ -977,7 +1000,7 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: ['รายงาน'],
         root: 'D:\\my-work',
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
         modifiedAfter: undefined,
       });
@@ -989,7 +1012,12 @@ describe('AgentService', () => {
         .mockResolvedValueOnce({
           content: '',
           toolCalls: [
-            { function: { name: 'search_files', arguments: { modifiedRange: 'today' } } },
+            {
+              function: {
+                name: 'search_files',
+                arguments: { modifiedRange: 'today' },
+              },
+            },
           ],
         })
         .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
@@ -1019,11 +1047,15 @@ describe('AgentService', () => {
       await flush();
 
       expect(mcp.searchFiles).toHaveBeenCalledWith(
-        expect.objectContaining({ queries: [], root: undefined, maxResults: 20 }),
+        expect.objectContaining({
+          queries: [],
+          root: undefined,
+          maxResults: 25,
+        }),
       );
     });
 
-    it('respects an explicit maxResults instead of the date-only-search default', async () => {
+    it('respects an explicit maxResults instead of the model-facing default', async () => {
       const { agent, mcp, ollama, permissions, task } = createAgent();
       (ollama.chat as jest.Mock)
         .mockResolvedValueOnce({
@@ -1123,7 +1155,7 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: ['ดาวโหลด', 'Downloads'],
         root: undefined,
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
       });
     });
@@ -1174,12 +1206,12 @@ describe('AgentService', () => {
       expect(mcp.searchFiles).toHaveBeenCalledWith({
         queries: ['ดาวน์โหลด', 'Downloads'],
         root: undefined,
-        maxResults: undefined,
+        maxResults: 25,
         maxDepth: undefined,
       });
     });
 
-    it('scopes into the special folder\'s real path (dropping the folder name from queries) when the model combines it with a date filter, instead of treating the name as a filename to search for', async () => {
+    it("scopes into the special folder's real path (dropping the folder name from queries) when the model combines it with a date filter, instead of treating the name as a filename to search for", async () => {
       const { agent, tasks, mcp, ollama, permissions, task } = createAgent();
       (ollama.chat as jest.Mock)
         .mockResolvedValueOnce({
@@ -1236,7 +1268,7 @@ describe('AgentService', () => {
       );
     });
 
-    it('scopes a name search into the special folder\'s real path when another real search term is combined with it', async () => {
+    it("scopes a name search into the special folder's real path when another real search term is combined with it", async () => {
       const { agent, mcp, ollama, permissions, task } = createAgent();
       (ollama.chat as jest.Mock)
         .mockResolvedValueOnce({
@@ -1359,6 +1391,113 @@ describe('AgentService', () => {
     });
   });
 
+  describe('forced retry when the model answers without calling a tool', () => {
+    it('retries once with a nudge when a file-lookup message gets answered with zero tool calls, then completes using the retry', async () => {
+      const { agent, tasks, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: 'ไม่มีข้อมูลหรือการเข้าถึงตำแหน่งของไฟล์นั้น',
+          toolCalls: [],
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'scan_directory',
+                arguments: { path: 'D:\\my-work\\assistant-app' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Here it is', toolCalls: [] });
+      (mcp.scanDirectory as jest.Mock).mockResolvedValue({ entries: [] });
+
+      agent.start(task.id, 'ใน assistant-app มีไฟล์อะไรบ้าง');
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(3);
+      // The retry's system nudge is appended after the original conversation
+      // rather than replacing it.
+      const chatMock = ollama.chat as jest.Mock<
+        Promise<{ content: string; toolCalls: unknown[] }>,
+        [Array<{ role: string; content: string }>]
+      >;
+      const secondCallMessages = chatMock.mock.calls[1][0];
+      expect(secondCallMessages[secondCallMessages.length - 1]).toEqual(
+        expect.objectContaining({ role: 'system' }),
+      );
+      expect(tasks.addMessage).toHaveBeenCalledWith(
+        task.id,
+        'assistant',
+        'Here it is',
+        undefined,
+        expect.anything(),
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('does not retry a second time if the model still answers without a tool call', async () => {
+      const { agent, tasks, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ไม่พบไฟล์',
+        toolCalls: [],
+      });
+
+      agent.start(task.id, 'หาไฟล์ report.pdf ให้หน่อย');
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(2);
+      expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('does not retry a mutation request (e.g. delete) even with zero tool calls, since no tool supports it', async () => {
+      const { agent, tasks, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ฉันไม่สามารถลบไฟล์ได้',
+        toolCalls: [],
+      });
+
+      agent.start(task.id, 'ช่วยลบไฟล์ README.md ให้หน่อย');
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(1);
+      expect(tasks.addMessage).toHaveBeenCalledWith(
+        task.id,
+        'assistant',
+        'ฉันไม่สามารถลบไฟล์ได้',
+        undefined,
+        undefined,
+      );
+    });
+
+    it('does not retry once a real tool has already run earlier in the same turn', async () => {
+      const { agent, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              function: {
+                name: 'scan_directory',
+                arguments: { path: 'D:\\my-work' },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: 'ไม่พบไฟล์ที่ค้นหาเพิ่มเติมในโฟลเดอร์นี้',
+          toolCalls: [],
+        });
+      (mcp.scanDirectory as jest.Mock).mockResolvedValue({ entries: [] });
+
+      agent.start(task.id, 'หาไฟล์ในโฟลเดอร์นี้ให้หน่อย');
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('file link rendering', () => {
     type Linkifier = {
       linkifyFilePaths: (
@@ -1396,7 +1535,10 @@ describe('AgentService', () => {
           { role: 'assistant', content: '{"entries":[]}' },
           { role: 'tool', content: 'not json' },
           { role: 'tool', content: 'null' },
-          { role: 'tool', content: '{"matches":[null,{}, {"name":1,"path":2}]}' },
+          {
+            role: 'tool',
+            content: '{"matches":[null,{}, {"name":1,"path":2}]}',
+          },
         ]),
       ).toBe(content);
     });

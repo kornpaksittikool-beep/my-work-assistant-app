@@ -156,7 +156,12 @@ export class AssistantStore {
     if (event.type === 'status') {
       const status = String(payload['status']) as TaskStatus;
       this.patchStatus(status);
-      if (status === 'working') this.startWorkTimer();
+      // A 'working' status can restart the agent loop mid-task (e.g. the
+      // service retrying a turn that answered without calling a tool) - any
+      // text already streamed for the turn being restarted is stale, so
+      // clear it rather than let the next attempt's deltas appear appended
+      // after it.
+      if (status === 'working') { this.startWorkTimer(); this.clearStreamingText(); }
       else if (status === 'completed' || status === 'stopped' || status === 'failed') this.stopWorkTimer();
     } else if (event.type === 'message_delta') {
       this.queueStreamDelta(String(payload['delta'] ?? ''));

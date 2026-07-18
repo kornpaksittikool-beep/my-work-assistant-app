@@ -13,6 +13,11 @@ export interface ToolActivityEntry {
   label: string;
   detail: string;
   state: 'done' | 'failed';
+  /** Distinguishes an actual scan_directory/search_files call from a
+   * permission allow/deny decision, so the client can count "N tools used"
+   * against real tool invocations only instead of including permission
+   * events in that number. */
+  kind: 'tool' | 'permission';
 }
 
 export interface ChatMessage {
