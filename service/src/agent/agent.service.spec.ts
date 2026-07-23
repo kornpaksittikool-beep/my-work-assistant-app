@@ -981,6 +981,31 @@ describe('AgentService', () => {
       expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
     });
 
+    it('infers the root from a quoted absolute path in the user message without truncating the file extension', async () => {
+      const { agent, mcp, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            { function: { name: 'search_files', arguments: { queries: [] } } },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Found it', toolCalls: [] });
+      (mcp.searchFiles as jest.Mock).mockResolvedValue({ matches: [] });
+
+      agent.start(
+        task.id,
+        '"D:\\my-work\\AVATR -Competitor Review-July2026.pdf" อันนี้ละ',
+      );
+      await flush();
+
+      expect(mcp.searchFiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: 'D:\\my-work\\AVATR -Competitor Review-July2026.pdf',
+        }),
+      );
+    });
+
     it('nudges the model to retry with shorter root words when a Thai-query search comes back empty', async () => {
       const { agent, ollama, mcp, task } = createAgent();
       (ollama.chat as jest.Mock)

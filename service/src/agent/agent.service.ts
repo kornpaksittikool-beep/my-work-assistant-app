@@ -1216,8 +1216,17 @@ export class AgentService {
     text: string | undefined,
   ): string | undefined {
     if (!text) return undefined;
+    // A "." immediately followed by a letter/digit is almost certainly a
+    // file extension (e.g. "...July2026.pdf"), not the end of the sentence
+    // - treating every "." as a stop (observed directly) truncated the
+    // extension off a quoted path, so the recovered "path" pointed at a
+    // file that doesn't exist even though the real one does. Only an
+    // unquoted trailing "." or one not immediately followed by a real
+    // extension character counts as sentence punctuation here; a quote
+    // character right after the path (its own lookahead branch below) is
+    // the reliable end-of-path signal for a quoted path either way.
     const match = text.match(
-      /[a-zA-Z]:\\[^\r\n"']*?(?=\s+(?:ช่วย|ให้|หน่อย|ที|โดย|พร้อม|please\b|and\b)|[,.!?]|$)/i,
+      /[a-zA-Z]:\\[^\r\n"']*?(?=\s+(?:ช่วย|ให้|หน่อย|ที|โดย|พร้อม|please\b|and\b)|[,!?]|\.(?![A-Za-z0-9])|["']|$)/i,
     );
     const path = match?.[0].trim();
     if (!path) return undefined;
