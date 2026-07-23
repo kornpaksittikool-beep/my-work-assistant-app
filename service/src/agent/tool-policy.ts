@@ -9,6 +9,13 @@ const READ_ONLY_MODIFICATION_TIME =
   /(?:ไฟล์|โฟลเดอร์|เอกสาร).{0,60}(?:แก้ไข|เปลี่ยนแปลง).{0,40}(?:วันนี้|เมื่อวาน|วันที่|วัน|ชั่วโมง|สัปดาห์|อาทิตย์|เดือน|ปี)|\b(?:files?|folders?|documents?).{0,60}\b(?:modified|changed).{0,40}\b(?:today|yesterday|date|day|hours?|weeks?|months?|years?)\b/i;
 const FILE_CONTENT_REQUEST =
   /สรุปเนื้อหา|อ่าน(?:เนื้อหา|ไฟล์|เอกสาร)|พูดถึงอะไร|เกี่ยวกับอะไร|ใจความ(?:สำคัญ)?|หัวข้อ(?:ของ|ใน)(?:ไฟล์|เอกสาร)|มีอะไรเขียน|\b(?:read|summari[sz]e)\b.{0,80}\b(?:file|document|contents?)\b|\bwhat (?:does|is in)\b.{0,80}\b(?:file|document)\b/i;
+/** Bare mentions of a document/file format. A short colloquial follow-up
+ * (e.g. "และ พวก timeSheet อะ", "มันไม่ใช่ pdf สิ") often has none of
+ * FILE_LOOKUP_INTENT's explicit lookup verbs, so without this it silently
+ * skips the forced-tool-retry check and the model answers from a stale
+ * earlier search result instead of searching again for the new term. */
+const FILE_TYPE_MENTION =
+  /\btimesheet\b|\bgsheet\b|\bspreadsheet\b|สเปรดชีต|\bpdf\b|\bdocx?\b|\bxlsx?\b|\bpptx?\b|\bcsv\b|\bexcel\b|\bpowerpoint\b/i;
 
 export const DIRECTORY_LIST_INTENT =
   /สแกน|ดู(?:ใน|ข้างใน)|มีอะไร|รายการ|ระดับบนสุด|\bscan\b|\blist\b|\bshow\b|\bcontents?\b/i;
@@ -28,7 +35,8 @@ export function evaluateToolPolicy(userText: string): ToolPolicyDecision {
   return {
     requiresFileEvidence:
       (FILE_LOOKUP_INTENT.test(userText) ||
-        FILE_CONTENT_REQUEST.test(userText)) &&
+        FILE_CONTENT_REQUEST.test(userText) ||
+        FILE_TYPE_MENTION.test(userText)) &&
       !isMutation,
     isMutation,
     isDirectoryListing: DIRECTORY_LIST_INTENT.test(userText),

@@ -66,4 +66,16 @@ describe('tool policy', () => {
       requestsFileContent: false,
     });
   });
+
+  it('requires evidence for a short colloquial follow-up that only names a document format', () => {
+    expect(evaluateToolPolicy('และ พวก timeSheet อะ')).toMatchObject({
+      requiresFileEvidence: true,
+    });
+    expect(evaluateToolPolicy('มันไม่ใช่ pdf สิ')).toMatchObject({
+      requiresFileEvidence: true,
+    });
+    expect(evaluateToolPolicy('ลองหาเป็น gsheet ดูสิ')).toMatchObject({
+      requiresFileEvidence: true,
+    });
+  });
 });
