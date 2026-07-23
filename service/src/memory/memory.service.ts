@@ -4,6 +4,35 @@ import { randomUUID } from 'crypto';
 import { MemoryRepository } from './memory.repository';
 import { ExtractedMemoryCandidate, MemoryRecord } from './memory.types';
 
+const NEAR_DUPLICATE_WORD_OVERLAP = 0.6;
+
+function wordsOf(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((word) => word.length > 0),
+  );
+}
+
+/**
+ * A small model asked to write a "new" fact sometimes just paraphrases a
+ * memory already given to it as existing context instead of recognizing
+ * nothing new happened this turn (observed: two records about the same
+ * timesheet-file interest, worded differently, both got stored). Exact
+ * string matching alone doesn't catch that - compare word overlap instead.
+ */
+function isNearDuplicateText(a: string, b: string): boolean {
+  const wordsA = wordsOf(a);
+  const wordsB = wordsOf(b);
+  if (wordsA.size === 0 || wordsB.size === 0) return false;
+  let shared = 0;
+  for (const word of wordsA) if (wordsB.has(word)) shared++;
+  return (
+    shared / Math.min(wordsA.size, wordsB.size) >= NEAR_DUPLICATE_WORD_OVERLAP
+  );
+}
+
 @Injectable()
 export class MemoryService {
   private readonly maxRecordsPerScope: number;
@@ -53,12 +82,7 @@ export class MemoryService {
         scope === 'global'
           ? this.repository.findGlobal()
           : this.repository.findForWorkspace(workspacePath);
-      const normalized = text.toLowerCase();
-      if (
-        existing.some(
-          (record) => record.text.trim().toLowerCase() === normalized,
-        )
-      ) {
+      if (existing.some((record) => isNearDuplicateText(record.text, text))) {
         continue;
       }
       this.repository.add({

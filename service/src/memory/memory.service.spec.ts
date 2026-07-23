@@ -73,6 +73,49 @@ describe('MemoryService', () => {
     expect(repository.add).toHaveBeenCalledTimes(1);
   });
 
+  it('skips a reworded paraphrase of an existing memory in the same scope', () => {
+    const { service, repository } = createService();
+    service.applyExtracted(
+      [
+        {
+          scope: 'workspace',
+          text: "User has expressed interest in non-PDF files related to 'timeSheet' or 'working hours', specifically Google Sheets with names like 'หางาน.gsheet'",
+        },
+      ],
+      'D:\\my-work',
+      'task-1',
+    );
+
+    service.applyExtracted(
+      [
+        {
+          scope: 'workspace',
+          text: "User has shown consistent interest in non-PDF files related to 'timeSheet' or 'working hours', with a specific preference for Google Sheets files named 'หางาน.gsheet'",
+        },
+      ],
+      'D:\\my-work',
+      'task-2',
+    );
+
+    expect(repository.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps two genuinely different memories in the same scope', () => {
+    const { service, repository } = createService();
+    service.applyExtracted(
+      [{ scope: 'global', text: 'ชอบคำตอบสั้นกระชับ' }],
+      'D:\\my-work',
+      'task-1',
+    );
+    service.applyExtracted(
+      [{ scope: 'global', text: 'ทำงานเป็น data engineer' }],
+      'D:\\my-work',
+      'task-2',
+    );
+
+    expect(repository.add).toHaveBeenCalledTimes(2);
+  });
+
   it('prunes the oldest record in a scope once the cap is exceeded', () => {
     const { service } = createService({ maxPerScope: 2 });
     service.applyExtracted(
