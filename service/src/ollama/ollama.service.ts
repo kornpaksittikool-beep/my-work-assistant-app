@@ -15,6 +15,28 @@ interface OllamaResponse {
 const MAX_PLANNED_QUERIES = 12;
 const MAX_EXTRACTED_MEMORIES = 3;
 
+/**
+ * Thai dependent vowel signs and tone marks (U+0E31 MAI HAN-AKAT, U+0E32
+ * SARA AA, U+0E34-U+0E3A SARA I..PHINTHU, U+0E46-U+0E4E MAIYAMOK..YAMAKKAN)
+ * that must attach to a preceding consonant and can never legitimately
+ * start a word on their own. A small model asked to split a Thai compound
+ * word into "roots" sometimes just slices it at an arbitrary character
+ * offset instead of a real word boundary (e.g. "เวลาทำงาน" -> "เวลาท" +
+ * "ำงาน"/"ํางาน") - a fragment starting with one of these is a reliable
+ * sign of that kind of cut, even though the fragment happens to still be a
+ * literal substring of the word.
+ */
+// eslint-disable-next-line no-misleading-character-class -- each escape is an intentional standalone Thai combining mark/tone mark, not an accidental combined grapheme.
+const INVALID_THAI_FRAGMENT_START = /^[\u0E31\u0E32\u0E34-\u0E3A\u0E46-\u0E4E]/;
+
+function startsWithInvalidThaiFragment(query: string): boolean {
+  return INVALID_THAI_FRAGMENT_START.test(query);
+}
+
+function containsThai(text: string): boolean {
+  return /[฀-๿]/.test(text);
+}
+
 @Injectable()
 export class OllamaService {
   private readonly baseUrl: string;
@@ -148,7 +170,7 @@ export class OllamaService {
             {
               role: 'system',
               content:
-                'Create a filename-search plan from the user request. Return JSON only. Generate short literal substrings that could realistically occur in filenames. Include the important original term plus useful roots, synonyms, common translations, abbreviations, and likely spelling corrections inferred from context. Preserve exact identifiers, codes, and quoted filenames. Do not invent paths. Do not include conversational filler. Keep at most 12 unique queries. Set fuzzy=true when spelling may be uncertain or the request is topic-based.',
+                'Create a filename-search plan from the user request. Return JSON only. Generate short literal substrings that could realistically occur in filenames. Include the important original term plus useful roots, synonyms, common translations, abbreviations, and likely spelling corrections inferred from context. For Thai compound words, only split at a boundary that is itself a real, independently meaningful Thai word (e.g. เวลา + ทำงาน) - never cut at an arbitrary syllable or character boundary that is not a real word on its own (e.g. never produce a fragment like "เวลาท" or "ํางาน" from "เวลาทำงาน"). Preserve exact identifiers, codes, and quoted filenames. Do not invent paths. Do not include conversational filler. Keep at most 12 unique queries. Set fuzzy=true when spelling may be uncertain or the request is topic-based.',
             },
             { role: 'user', content: userText },
           ],
@@ -172,7 +194,12 @@ export class OllamaService {
           parsed.queries
             .filter((query): query is string => typeof query === 'string')
             .map((query) => query.trim())
-            .filter((query) => query.length > 0 && query.length <= 100),
+            .filter(
+              (query) =>
+                query.length > 0 &&
+                query.length <= 100 &&
+                !startsWithInvalidThaiFragment(query),
+            ),
         ),
       ].slice(0, MAX_PLANNED_QUERIES);
       if (queries.length === 0) return null;
@@ -225,7 +252,7 @@ export class OllamaService {
             {
               role: 'system',
               content:
-                'Decide if this exchange contains anything genuinely new and durable worth remembering across future sessions. Return JSON only. Use scope="global" for stable facts/preferences about the user (name, language, habits) that apply regardless of project. Use scope="workspace" for facts specific to the current project/workspace. Each text must be a short, self-contained sentence. Do not repeat anything already listed in the existing-memories context. Most turns have nothing worth remembering - return an empty memories array in that case. Never record secrets, credentials, or file contents.',
+                'Decide if this exchange contains anything genuinely new and durable worth remembering across future sessions. Return JSON only. Write each text in the same language the user wrote their message in - never translate it to English or any other language. Use scope="global" for stable facts/preferences about the user (name, language, habits) that apply regardless of project. Use scope="workspace" for facts specific to the current project/workspace. Each text must be a short, self-contained, concrete fact - never meta-commentary about this conversation or about testing/validating the system itself (e.g. never write something like "user is testing the system" or "user wants a response"). Do not repeat anything already listed in the existing-memories context. Most turns have nothing worth remembering - return an empty memories array in that case. Never record secrets, credentials, or file contents.',
             },
             {
               role: 'user',
@@ -258,7 +285,15 @@ export class OllamaService {
           scope: memory.scope === 'global' ? 'global' : 'workspace',
           text: memory.text.trim(),
         }))
-        .filter((memory) => memory.text.length > 0 && memory.text.length <= 500)
+        .filter(
+          (memory) =>
+            memory.text.length > 0 &&
+            memory.text.length <= 500 &&
+            // A model asked to write in the user's language sometimes still
+            // answers in English regardless - reject rather than silently
+            // store a memory in the wrong language for a Thai-speaking user.
+            (!containsThai(userText) || containsThai(memory.text)),
+        )
         .slice(0, MAX_EXTRACTED_MEMORIES);
     } catch {
       return null;

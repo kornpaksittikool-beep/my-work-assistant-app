@@ -117,6 +117,103 @@ describe('OllamaService', () => {
       await expect(service.planFileSearch('first')).resolves.toBeNull();
       await expect(service.planFileSearch('second')).resolves.toBeNull();
     });
+
+    it('drops Thai query fragments cut at an invalid word boundary, keeping real words', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            message: {
+              content: JSON.stringify({
+                queries: [
+                  'เวลาทำงาน',
+                  'เวลาท',
+                  'ํางาน',
+                  'ารลงเวลา',
+                  'การลงเวลา',
+                ],
+                fuzzy: true,
+              }),
+            },
+          }),
+      });
+
+      await expect(
+        createService().planFileSearch('หาไฟล์เกี่ยวกับการลงเวลางาน'),
+      ).resolves.toEqual({
+        queries: ['เวลาทำงาน', 'เวลาท', 'การลงเวลา'],
+        fuzzy: true,
+      });
+    });
+  });
+
+  describe('extractMemories', () => {
+    it('rejects a memory written in English when the user wrote Thai', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            message: {
+              content: JSON.stringify({
+                memories: [
+                  {
+                    scope: 'global',
+                    text: 'User prefers testing interactions to validate system responses',
+                  },
+                ],
+              }),
+            },
+          }),
+      });
+
+      await expect(
+        createService().extractMemories('ทดสอบสิ', 'ok', null),
+      ).resolves.toEqual([]);
+    });
+
+    it('keeps a memory written in Thai when the user wrote Thai', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            message: {
+              content: JSON.stringify({
+                memories: [{ scope: 'global', text: 'ชอบคำตอบสั้นกระชับ' }],
+              }),
+            },
+          }),
+      });
+
+      await expect(
+        createService().extractMemories('ตอบสั้นๆหน่อยนะ', 'ok', null),
+      ).resolves.toEqual([{ scope: 'global', text: 'ชอบคำตอบสั้นกระชับ' }]);
+    });
+
+    it('keeps an English memory when the user wrote in English', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            message: {
+              content: JSON.stringify({
+                memories: [
+                  { scope: 'global', text: 'Prefers concise answers' },
+                ],
+              }),
+            },
+          }),
+      });
+
+      await expect(
+        createService().extractMemories(
+          'Keep answers short please',
+          'ok',
+          null,
+        ),
+      ).resolves.toEqual([
+        { scope: 'global', text: 'Prefers concise answers' },
+      ]);
+    });
   });
 
   describe('chat', () => {
