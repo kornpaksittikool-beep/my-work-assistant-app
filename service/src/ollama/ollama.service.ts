@@ -1,6 +1,7 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  ExtractedMemory,
   FileSearchPlan,
   OllamaChatMessage,
   OllamaChatResult,
@@ -12,6 +13,7 @@ interface OllamaResponse {
 }
 
 const MAX_PLANNED_QUERIES = 12;
+const MAX_EXTRACTED_MEMORIES = 3;
 
 @Injectable()
 export class OllamaService {
@@ -175,6 +177,89 @@ export class OllamaService {
       ].slice(0, MAX_PLANNED_QUERIES);
       if (queries.length === 0) return null;
       return { queries, fuzzy: parsed.fuzzy === true };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Decides whether anything from this turn is worth remembering across
+   * sessions. A separate constrained call, same shape as planFileSearch, so
+   * the normal chat model never has to juggle "should I remember this" on
+   * top of answering the user. Returning null/empty is the common case and a
+   * safe soft failure - the turn already completed regardless of this call.
+   */
+  async extractMemories(
+    userText: string,
+    assistantText: string,
+    existingContext: string | null,
+  ): Promise<ExtractedMemory[] | null> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          model: this.model,
+          stream: false,
+          format: {
+            type: 'object',
+            required: ['memories'],
+            properties: {
+              memories: {
+                type: 'array',
+                maxItems: MAX_EXTRACTED_MEMORIES,
+                items: {
+                  type: 'object',
+                  required: ['scope', 'text'],
+                  properties: {
+                    scope: { type: 'string', enum: ['global', 'workspace'] },
+                    text: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Decide if this exchange contains anything genuinely new and durable worth remembering across future sessions. Return JSON only. Use scope="global" for stable facts/preferences about the user (name, language, habits) that apply regardless of project. Use scope="workspace" for facts specific to the current project/workspace. Each text must be a short, self-contained sentence. Do not repeat anything already listed in the existing-memories context. Most turns have nothing worth remembering - return an empty memories array in that case. Never record secrets, credentials, or file contents.',
+            },
+            {
+              role: 'user',
+              content: `${existingContext ? `${existingContext}\n\n` : ''}User: ${userText}\nAssistant: ${assistantText}`,
+            },
+          ],
+          options: { num_ctx: Math.min(this.numCtx, 4096), temperature: 0 },
+        }),
+      });
+    } catch {
+      return null;
+    }
+    if (!response.ok) return null;
+
+    try {
+      const body = (await response.json()) as OllamaResponse;
+      const parsed = JSON.parse(body.message?.content ?? '') as {
+        memories?: unknown;
+      };
+      if (!Array.isArray(parsed.memories)) return null;
+      return parsed.memories
+        .filter(
+          (memory): memory is ExtractedMemory =>
+            !!memory &&
+            typeof memory === 'object' &&
+            (memory as ExtractedMemory).scope !== undefined &&
+            typeof (memory as ExtractedMemory).text === 'string',
+        )
+        .map((memory): ExtractedMemory => ({
+          scope: memory.scope === 'global' ? 'global' : 'workspace',
+          text: memory.text.trim(),
+        }))
+        .filter((memory) => memory.text.length > 0 && memory.text.length <= 500)
+        .slice(0, MAX_EXTRACTED_MEMORIES);
     } catch {
       return null;
     }

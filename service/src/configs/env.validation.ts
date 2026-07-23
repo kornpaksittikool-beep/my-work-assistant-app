@@ -58,6 +58,20 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   TASKS_DATA_FILE?: string;
+
+  @IsOptional()
+  @IsString()
+  MEMORY_DATA_FILE?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  MEMORY_MAX_RECORDS_PER_SCOPE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  MEMORY_CONTEXT_MAX_CHARS?: number;
 }
 
 export function validate(

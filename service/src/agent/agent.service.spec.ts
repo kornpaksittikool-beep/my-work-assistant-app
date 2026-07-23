@@ -9,6 +9,7 @@ import { TaskEventsService } from '../tasks/task-events.service';
 import { OllamaService } from '../ollama/ollama.service';
 import { McpClientService } from '../mcp/mcp-client.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import { MemoryService } from '../memory/memory.service';
 import type { AssistantTask } from '@assistant-app/contracts';
 import { OllamaChatMessage } from '../ollama/ollama.types';
 import {
@@ -62,6 +63,7 @@ describe('AgentService', () => {
     const ollama = {
       chat: jest.fn(),
       planFileSearch: jest.fn().mockResolvedValue(null),
+      extractMemories: jest.fn().mockResolvedValue(null),
     } as unknown as OllamaService;
     const mcp = {
       scanDirectory: jest.fn(),
@@ -73,6 +75,11 @@ describe('AgentService', () => {
       findOne: jest.fn(),
       resolve: jest.fn(),
     } as unknown as PermissionsService;
+    const memory = {
+      getContextFor: jest.fn().mockReturnValue([]),
+      buildContextPrompt: jest.fn().mockReturnValue(null),
+      applyExtracted: jest.fn(),
+    } as unknown as MemoryService;
     const config = { get: () => maxSteps } as unknown as ConfigService;
 
     const agent = new AgentService(
@@ -81,9 +88,10 @@ describe('AgentService', () => {
       ollama,
       mcp,
       permissions,
+      memory,
       config,
     );
-    return { agent, tasks, events, ollama, mcp, permissions, task };
+    return { agent, tasks, events, ollama, mcp, permissions, memory, task };
   };
 
   it('completes a task when the model responds without a tool call', async () => {
@@ -2455,5 +2463,112 @@ describe('AgentService', () => {
       undefined,
       expect.anything(),
     );
+  });
+
+  describe('memory', () => {
+    it('includes the memory context prompt as a system message when the store has matching records', async () => {
+      const { agent, ollama, memory, task } = createAgent();
+      (memory.buildContextPrompt as jest.Mock).mockReturnValue(
+        'Remembered context from previous sessions:\n- ชอบคำตอบสั้น',
+      );
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ok',
+        toolCalls: [],
+      });
+
+      agent.start(task.id, 'hello');
+      await flush();
+
+      expect(memory.getContextFor).toHaveBeenCalledWith(task.workspacePath);
+      const chatMock = ollama.chat as jest.Mock<
+        Promise<{ content: string; toolCalls: unknown[] }>,
+        [OllamaChatMessage[]]
+      >;
+      const sentMessages = chatMock.mock.calls[0][0];
+      expect(
+        sentMessages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content.includes('ชอบคำตอบสั้น'),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not add a memory system message when there is nothing remembered', async () => {
+      const { agent, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ok',
+        toolCalls: [],
+      });
+
+      agent.start(task.id, 'hello');
+      await flush();
+
+      const chatMock = ollama.chat as jest.Mock<
+        Promise<{ content: string; toolCalls: unknown[] }>,
+        [OllamaChatMessage[]]
+      >;
+      const sentMessages = chatMock.mock.calls[0][0];
+      expect(
+        sentMessages.some((message) =>
+          message.content.includes('Remembered context'),
+        ),
+      ).toBe(false);
+    });
+
+    it('extracts memories from a normal completed turn and applies them', async () => {
+      const { agent, ollama, memory, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ยินดีครับ',
+        toolCalls: [],
+      });
+      (ollama.extractMemories as jest.Mock).mockResolvedValue([
+        { scope: 'global', text: 'ชอบภาษาไทย' },
+      ]);
+
+      agent.start(task.id, 'สวัสดี ผมชอบคุยเป็นภาษาไทย');
+      await flush();
+      await flush();
+
+      expect(ollama.extractMemories).toHaveBeenCalledWith(
+        'สวัสดี ผมชอบคุยเป็นภาษาไทย',
+        'ยินดีครับ',
+        null,
+      );
+      expect(memory.applyExtracted).toHaveBeenCalledWith(
+        [{ scope: 'global', text: 'ชอบภาษาไทย' }],
+        task.workspacePath,
+        task.id,
+      );
+    });
+
+    it('does not fail the turn when extractMemories throws', async () => {
+      const { agent, tasks, ollama, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ok',
+        toolCalls: [],
+      });
+      (ollama.extractMemories as jest.Mock).mockRejectedValue(
+        new Error('ollama down'),
+      );
+
+      agent.start(task.id, 'hello');
+      await flush();
+      await flush();
+
+      expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('does not trigger memory extraction for the canned mutation-refusal response', async () => {
+      const { agent, ollama, memory, task } = createAgent();
+
+      agent.start(task.id, 'ลบไฟล์ report.pdf ให้หน่อย');
+      await flush();
+      await flush();
+
+      expect(ollama.chat).not.toHaveBeenCalled();
+      expect(ollama.extractMemories).not.toHaveBeenCalled();
+      expect(memory.applyExtracted).not.toHaveBeenCalled();
+    });
   });
 });

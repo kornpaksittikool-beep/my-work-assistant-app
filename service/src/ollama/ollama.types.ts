@@ -19,3 +19,8 @@ export interface FileSearchPlan {
   /** Whether approximate filename matching is useful for this request. */
   fuzzy: boolean;
 }
+
+export interface ExtractedMemory {
+  scope: 'global' | 'workspace';
+  text: string;
+}
