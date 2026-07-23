@@ -185,4 +185,16 @@ describe('TasksRepository', () => {
     expect(() => new TasksRepository(config).findAll()).not.toThrow();
     expect(new TasksRepository(config).findAll()).toEqual([]);
   });
+
+  it('removes every task and persists the empty list', () => {
+    const repository = new TasksRepository(config);
+    repository.create('First', 'D:\\my-work');
+    repository.create('Second', 'D:\\my-work');
+    expect(repository.findAll()).toHaveLength(2);
+
+    repository.removeAll();
+
+    expect(repository.findAll()).toEqual([]);
+    expect(new TasksRepository(config).findAll()).toEqual([]);
+  });
 });

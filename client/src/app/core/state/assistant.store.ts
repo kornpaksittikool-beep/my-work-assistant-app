@@ -170,6 +170,16 @@ export class AssistantStore {
     });
   }
 
+  deleteAllTasks(): void {
+    this.api.deleteAllTasks().subscribe({
+      next: () => {
+        this.tasks.set([]);
+        this.newTask();
+      },
+      error: () => this.handleError('เคลียร์ประวัติแชทไม่สำเร็จ'),
+    });
+  }
+
   statusLabel(status: TaskStatus): string {
     return ({ idle: 'พร้อมเริ่ม', working: 'กำลังทำงาน', waiting_permission: 'รอการอนุญาต', completed: 'เสร็จแล้ว', stopped: 'หยุดแล้ว', failed: 'เกิดข้อผิดพลาด' })[status];
   }

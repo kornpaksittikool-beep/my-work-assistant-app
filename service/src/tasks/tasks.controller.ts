@@ -84,6 +84,17 @@ export class TasksController {
     return this.tasks.remove(id);
   }
 
+  @Delete()
+  @ApiEndpoint({
+    summary: 'ลบ task ทั้งหมดและประวัติการสนทนาทั้งหมด',
+    type: TaskResponseDto,
+    isArray: true,
+  })
+  removeAll(): AssistantTask[] {
+    this.tasks.removeAll();
+    return this.tasks.findAll();
+  }
+
   @Post(':id/messages')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiEndpoint({

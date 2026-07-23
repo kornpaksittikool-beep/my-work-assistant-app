@@ -35,4 +35,10 @@ export class Sidebar {
       this.store.deleteTask(id);
     }
   }
+
+  protected clearAllHistory(): void {
+    if (window.confirm('เคลียร์ประวัติแชททั้งหมดหรือไม่? การทำรายการนี้ย้อนกลับไม่ได้')) {
+      this.store.deleteAllTasks();
+    }
+  }
 }

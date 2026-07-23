@@ -27,7 +27,18 @@
 
   @if (!store.sidebarCollapsed()) {
     <nav class="flex-1 overflow-y-auto [scrollbar-width:thin] max-[900px]:hidden" aria-label="รายการงาน">
-      <p class="mx-2.5 mt-[9px] mb-2 text-[13px] text-muted">งานของฉัน</p>
+      <div class="mx-2.5 mt-[9px] mb-2 flex items-center justify-between">
+        <p class="text-[13px] text-muted">งานของฉัน</p>
+        <button
+          class="cursor-pointer rounded-[5px] border-0 bg-transparent p-0 text-[11px] text-faint hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          [disabled]="store.tasks().length === 0"
+          title="เคลียร์ประวัติแชททั้งหมด"
+          (click)="clearAllHistory()"
+        >
+          เคลียร์ทั้งหมด
+        </button>
+      </div>
       <input
         class="mb-2 w-full rounded-md border border-edge bg-surface-2 px-2.5 py-1.5 text-xs text-content outline-none placeholder:text-faint focus:border-accent"
         type="search"

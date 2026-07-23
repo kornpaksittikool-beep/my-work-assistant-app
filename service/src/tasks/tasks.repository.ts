@@ -100,6 +100,11 @@ export class TasksRepository {
     return task;
   }
 
+  removeAll(): void {
+    this.tasks.clear();
+    this.persist();
+  }
+
   findOne(id: string): AssistantTask {
     const task = this.tasks.get(id);
     if (!task) throw new NotFoundException(`Task not found: ${id}`);

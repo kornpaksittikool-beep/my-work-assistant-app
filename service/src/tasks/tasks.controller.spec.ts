@@ -22,6 +22,7 @@ describe('TasksController', () => {
       findOne: jest.fn().mockReturnValue(task),
       update: jest.fn().mockReturnValue(task),
       remove: jest.fn().mockReturnValue(task),
+      removeAll: jest.fn(),
     } as unknown as TasksRepository;
     const events = {
       stream: jest.fn().mockReturnValue('stream-observable'),
@@ -89,6 +90,14 @@ describe('TasksController', () => {
 
     expect(controller.remove('task-1')).toBe(task);
     expect(tasks.remove).toHaveBeenCalledWith('task-1');
+  });
+
+  it('deletes every task', () => {
+    const { controller, tasks } = createController();
+    (tasks.findAll as jest.Mock).mockReturnValue([]);
+
+    expect(controller.removeAll()).toEqual([]);
+    expect(tasks.removeAll).toHaveBeenCalled();
   });
 
   it('sends a message and starts the agent', () => {

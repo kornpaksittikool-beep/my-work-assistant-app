@@ -52,4 +52,10 @@ export class AssistantApiService {
       `${API_BASE_URL}/tasks/${taskId}`,
     );
   }
+
+  deleteAllTasks(): Observable<ApiEnvelope<AssistantTask[]>> {
+    return this.http.delete<ApiEnvelope<AssistantTask[]>>(
+      `${API_BASE_URL}/tasks`,
+    );
+  }
 }
