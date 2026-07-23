@@ -693,6 +693,25 @@ export class AgentService {
         : this.resolveNamedWorkspaceScope(lastUserMessage, workspacePath);
       if (scope) {
         root = scope.path;
+        // A recovered path that names a specific FILE (has a real
+        // extension) can never work as a search_files root - it walks
+        // directories, matching names found *inside* them, so pointing it
+        // straight at the file itself always returns zero matches even
+        // though the file exists (observed directly: "D:\...\report.pdf"
+        // as root found nothing despite the file being real). Search its
+        // parent directory instead, and make sure the filename itself is
+        // one of the queries so the file can still be matched by name.
+        if (explicitRoot && /\.[A-Za-z0-9]{1,10}$/.test(root)) {
+          const fileName = win32.basename(root);
+          root = win32.dirname(root);
+          if (
+            !queries.some(
+              (query) => query.toLowerCase() === fileName.toLowerCase(),
+            )
+          ) {
+            queries = [...queries, fileName];
+          }
+        }
         // The model sometimes puts the *folder name itself* in queries
         // (mirroring the special-folder pattern above) rather than using it
         // to say where to look - e.g. queries: ["dockers"] after already

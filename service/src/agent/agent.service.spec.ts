@@ -999,9 +999,14 @@ describe('AgentService', () => {
       );
       await flush();
 
+      // A path pointing at a specific file can't work as a search_files
+      // root (it walks directories, not a single file) - the parent
+      // directory becomes root, and the filename itself becomes a query so
+      // the file can still be matched by name.
       expect(mcp.searchFiles).toHaveBeenCalledWith(
         expect.objectContaining({
-          root: 'D:\\my-work\\AVATR -Competitor Review-July2026.pdf',
+          root: 'D:\\my-work',
+          queries: ['AVATR -Competitor Review-July2026.pdf'],
         }),
       );
     });
