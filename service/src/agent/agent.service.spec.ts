@@ -9,7 +9,7 @@ import { TaskEventsService } from '../tasks/task-events.service';
 import { OllamaService } from '../ollama/ollama.service';
 import { McpClientService } from '../mcp/mcp-client.service';
 import { PermissionsService } from '../permissions/permissions.service';
-import { AssistantTask } from '../tasks/task.types';
+import type { AssistantTask } from '@assistant-app/contracts';
 import { OllamaChatMessage } from '../ollama/ollama.types';
 import {
   FILE_CONTENT_UNAVAILABLE_RESPONSE,

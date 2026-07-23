@@ -11,13 +11,13 @@ import {
   writeFileSync,
 } from 'fs';
 import { dirname, join } from 'path';
-import {
+import type {
   AssistantTask,
   ChatMessage,
   MessageRole,
   TaskStatus,
   ToolActivityEntry,
-} from './task.types';
+} from '@assistant-app/contracts';
 
 @Injectable()
 export class TasksRepository {
@@ -76,9 +76,9 @@ export class TasksRepository {
   }
 
   findAll(): AssistantTask[] {
-    return [...this.tasks.values()].filter((task) => !task.archived).sort((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt),
-    );
+    return [...this.tasks.values()]
+      .filter((task) => !task.archived)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   update(

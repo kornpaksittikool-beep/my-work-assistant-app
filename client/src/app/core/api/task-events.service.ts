@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../config/api.config';
-import { AgentEvent } from '../models/assistant.models';
+import type { AgentEvent } from '@assistant-app/contracts';
 
 @Injectable({ providedIn: 'root' })
 export class TaskEventsService {

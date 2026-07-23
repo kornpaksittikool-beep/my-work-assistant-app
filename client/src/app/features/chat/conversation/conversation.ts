@@ -4,7 +4,7 @@ import { AssistantStore } from '../../../core/state/assistant.store';
 import { MarkdownPipe } from '../../../core/pipes/markdown.pipe';
 import { PermissionCard } from '../../permissions/permission-card/permission-card';
 import { ActivityList } from '../activity-list/activity-list';
-import { ChatMessage } from '../../../core/models/assistant.models';
+import type { ChatMessage } from '@assistant-app/contracts';
 import { formatLocalTime } from '../../../core/utils/date-time';
 
 /** How close to the bottom (px) still counts as "at the bottom" for

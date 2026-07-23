@@ -10,7 +10,7 @@ import { OllamaService } from '../ollama/ollama.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { TaskEventsService } from '../tasks/task-events.service';
 import { TasksRepository } from '../tasks/tasks.repository';
-import { ToolActivityEntry } from '../tasks/task.types';
+import type { ToolActivityEntry } from '@assistant-app/contracts';
 import {
   DIRECTORY_LIST_INTENT,
   evaluateToolPolicy,

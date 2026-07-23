@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { AssistantTask } from './task.types';
+import type { AssistantTask } from '@assistant-app/contracts';
 import { TasksRepository } from './tasks.repository';
 
 describe('TasksRepository', () => {
@@ -141,7 +141,10 @@ describe('TasksRepository', () => {
   });
 
   it('marks non-resumable working and permission-waiting tasks as stopped after restart', () => {
-    const makeTask = (id: string, status: AssistantTask['status']): AssistantTask => ({
+    const makeTask = (
+      id: string,
+      status: AssistantTask['status'],
+    ): AssistantTask => ({
       id,
       title: id,
       workspacePath: 'D:\\my-work',

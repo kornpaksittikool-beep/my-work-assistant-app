@@ -1,7 +1,7 @@
 import { Injectable, MessageEvent } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Observable, ReplaySubject } from 'rxjs';
-import { AgentEventData } from './task.types';
+import type { AgentEvent } from '@assistant-app/contracts';
 
 @Injectable()
 export class TaskEventsService {
@@ -13,10 +13,10 @@ export class TaskEventsService {
 
   emit(
     taskId: string,
-    type: AgentEventData['type'],
+    type: AgentEvent['type'],
     payload: Record<string, unknown>,
-  ): AgentEventData {
-    const event: AgentEventData = {
+  ): AgentEvent {
+    const event: AgentEvent = {
       id: randomUUID(),
       taskId,
       type,

@@ -2,7 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { of, Subject } from 'rxjs';
 import { AssistantApiService } from '../api/assistant-api.service';
 import { TaskEventsService } from '../api/task-events.service';
-import { AgentEvent, AssistantTask, HealthStatus } from '../models/assistant.models';
+import { HealthStatus } from '../models/assistant.models';
+import type { AgentEvent, AssistantTask } from '@assistant-app/contracts';
 import { AssistantStore } from './assistant.store';
 
 describe('AssistantStore', () => {

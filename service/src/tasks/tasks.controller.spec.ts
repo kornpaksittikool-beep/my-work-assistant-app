@@ -2,7 +2,7 @@ import { TasksController } from './tasks.controller';
 import { TasksRepository } from './tasks.repository';
 import { TaskEventsService } from './task-events.service';
 import { AgentService } from '../agent/agent.service';
-import { AssistantTask } from './task.types';
+import type { AssistantTask } from '@assistant-app/contracts';
 
 describe('TasksController', () => {
   const task: AssistantTask = {

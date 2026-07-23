@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { PermissionRequest } from './permission.types';
+import type { PermissionRequest } from '@assistant-app/contracts';
 
 @Injectable()
 export class PermissionsService {

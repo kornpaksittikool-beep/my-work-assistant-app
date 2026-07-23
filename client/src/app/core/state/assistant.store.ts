@@ -3,7 +3,8 @@ import { Subscription } from 'rxjs';
 import { AssistantApiService } from '../api/assistant-api.service';
 import { TaskEventsService } from '../api/task-events.service';
 import { DEFAULT_WORKSPACE_PATH } from '../config/api.config';
-import { ActivityItem, AgentEvent, AssistantTask, ChatMessage, PermissionRequest, TaskStatus } from '../models/assistant.models';
+import { ActivityItem } from '../models/assistant.models';
+import type { AgentEvent, AssistantTask, ChatMessage, PermissionRequest, TaskStatus } from '@assistant-app/contracts';
 
 @Injectable({ providedIn: 'root' })
 export class AssistantStore {

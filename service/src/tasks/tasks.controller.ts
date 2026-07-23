@@ -23,7 +23,7 @@ import { TaskResponseDto } from './dto/task-response.dto';
 import { TaskEventsService } from './task-events.service';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksRepository } from './tasks.repository';
-import type { AssistantTask } from './task.types';
+import type { AssistantTask } from '@assistant-app/contracts';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -70,10 +70,7 @@ export class TasksController {
     type: TaskResponseDto,
     extraErrors: [404],
   })
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateTaskDto,
-  ): AssistantTask {
+  update(@Param('id') id: string, @Body() dto: UpdateTaskDto): AssistantTask {
     return this.tasks.update(id, dto);
   }
 
