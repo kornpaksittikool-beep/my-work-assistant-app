@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
+import type { MemoryRecord } from '@assistant-app/contracts';
 import { MemoryRepository } from './memory.repository';
-import { ExtractedMemoryCandidate, MemoryRecord } from './memory.types';
+import { ExtractedMemoryCandidate } from './memory.types';
 
 const NEAR_DUPLICATE_WORD_OVERLAP = 0.6;
 
@@ -46,6 +47,16 @@ export class MemoryService {
       config.get<number>('MEMORY_MAX_RECORDS_PER_SCOPE') ?? 40;
     this.contextMaxChars =
       config.get<number>('MEMORY_CONTEXT_MAX_CHARS') ?? 1200;
+  }
+
+  listAll(): MemoryRecord[] {
+    return this.repository
+      .findAll()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  remove(id: string): void {
+    this.repository.remove(id);
   }
 
   getContextFor(workspacePath: string): MemoryRecord[] {

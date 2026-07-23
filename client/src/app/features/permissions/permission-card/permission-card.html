@@ -5,7 +5,7 @@
       <div><strong class="text-sm font-medium">ต้องการเข้าถึงข้อมูล (อ่านอย่างเดียว)</strong><p class="my-[3px] text-sm text-content">{{ permission.path }}</p><small class="text-muted">เพื่ออ่านไฟล์และทำงานตามคำขอ</small></div>
     </div>
     <div class="flex min-w-[120px] flex-col items-center gap-[7px] max-[620px]:flex-row">
-      <button class="min-h-[37px] w-full cursor-pointer rounded-md border border-[#7783ff] bg-accent px-[15px] text-white hover:bg-accent-hover" type="button" (click)="store.resolvePermission(true)">อนุญาต</button>
+      <button class="min-h-[37px] w-full cursor-pointer rounded-md border border-accent-hover bg-accent px-[15px] text-white hover:bg-accent-hover" type="button" (click)="store.resolvePermission(true)">อนุญาต</button>
       <button class="min-h-[37px] w-full cursor-pointer rounded-md border border-edge-strong bg-transparent px-[15px]" type="button" (click)="store.resolvePermission(false)">ปฏิเสธ</button>
     </div>
   </div>

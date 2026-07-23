@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'fs';
 import { dirname, join } from 'path';
-import { MemoryRecord } from './memory.types';
+import type { MemoryRecord } from '@assistant-app/contracts';
 
 @Injectable()
 export class MemoryRepository {
@@ -34,6 +34,10 @@ export class MemoryRepository {
     } catch {
       // no persisted data yet (first run, or file missing/corrupt)
     }
+  }
+
+  findAll(): MemoryRecord[] {
+    return [...this.records.values()];
   }
 
   findGlobal(): MemoryRecord[] {

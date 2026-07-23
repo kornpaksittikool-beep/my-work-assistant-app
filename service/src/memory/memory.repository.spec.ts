@@ -2,8 +2,8 @@ import { ConfigService } from '@nestjs/config';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import type { MemoryRecord } from '@assistant-app/contracts';
 import { MemoryRepository } from './memory.repository';
-import { MemoryRecord } from './memory.types';
 
 describe('MemoryRepository', () => {
   let tmpDir: string;
@@ -43,6 +43,21 @@ describe('MemoryRepository', () => {
     expect(repository.findGlobal()).toHaveLength(1);
     expect(repository.findForWorkspace('D:\\my-work')).toHaveLength(1);
     expect(repository.findForWorkspace('D:\\other')).toHaveLength(0);
+  });
+
+  it('finds every record regardless of scope', () => {
+    const repository = new MemoryRepository(config);
+    repository.add(record());
+    repository.add(
+      record({ id: 'mem-2', scope: 'workspace', workspacePath: 'D:\\my-work' }),
+    );
+
+    expect(
+      repository
+        .findAll()
+        .map((r) => r.id)
+        .sort(),
+    ).toEqual(['mem-1', 'mem-2']);
   });
 
   it('persists every mutation to the data file', () => {

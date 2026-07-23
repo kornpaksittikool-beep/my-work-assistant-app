@@ -30,4 +30,10 @@ export class WorkspaceHeader {
     this.isDeleteConfirmationOpen.set(false);
     this.store.deleteTask(task.id);
   }
+
+  protected deleteMemory(id: string): void {
+    if (window.confirm('ลบความจำนี้หรือไม่?')) {
+      this.store.deleteMemory(id);
+    }
+  }
 }

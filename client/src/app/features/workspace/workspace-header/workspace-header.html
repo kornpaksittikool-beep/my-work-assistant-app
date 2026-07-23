@@ -3,22 +3,76 @@
     <svg class="shrink-0 text-muted max-[620px]:hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4"/></svg>
     <div>
       <div class="flex items-center gap-[7px]"><h1 class="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[15px] font-medium max-[620px]:max-w-[190px]">{{ store.activeTaskTitle() }}</h1></div>
-      <div class="mt-1 flex items-center gap-2 text-[10px] text-faint">
-        <button class="cursor-pointer rounded-[5px] border border-edge bg-transparent px-[7px] py-[3px]" type="button" (click)="store.toggleWorkspacePanel()">Workspace: <strong class="font-normal text-muted">{{ store.activeTask()?.workspacePath || 'กำลังโหลด...' }}</strong></button>
-        @if (store.pendingPermission(); as permission) { <span class="rounded-[5px] border border-edge px-[7px] py-[3px] max-[900px]:hidden">ขอสิทธิ์: <strong class="font-normal text-muted">{{ permission.path }}</strong></span> }
-      </div>
+      @if (store.pendingPermission(); as permission) {
+        <div class="mt-1 flex items-center gap-2 text-[10px] text-faint">
+          <span class="rounded-[5px] border border-edge px-[7px] py-[3px] max-[900px]:hidden">ขอสิทธิ์: <strong class="font-normal text-muted">{{ permission.path }}</strong></span>
+        </div>
+      }
     </div>
   </div>
-  <button
-    class="self-center cursor-pointer rounded-md border border-edge bg-transparent px-3 py-1.5 text-xs text-muted hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
-    type="button"
-    [disabled]="!store.canDeleteChat()"
-    title="ลบแชทนี้ออกจากประวัติ"
-    (click)="requestDeleteChat()"
-  >
-    ลบแชท
-  </button>
+  <div class="flex items-center gap-2">
+    <button
+      class="self-center cursor-pointer rounded-md border border-edge bg-transparent px-3 py-1.5 text-xs text-muted hover:border-accent/60 hover:text-content"
+      type="button"
+      title="ดูความจำที่ระบบจำไว้"
+      (click)="store.toggleMemoryPanel()"
+    >
+      ความจำ
+    </button>
+    <button
+      class="self-center cursor-pointer rounded-md border border-edge bg-transparent px-3 py-1.5 text-xs text-muted hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+      type="button"
+      [disabled]="!store.canDeleteChat()"
+      title="ลบแชทนี้ออกจากประวัติ"
+      (click)="requestDeleteChat()"
+    >
+      ลบแชท
+    </button>
+  </div>
 </header>
+
+@if (store.memoryPanelOpen()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4" role="presentation" (click)="store.toggleMemoryPanel()">
+    <section
+      class="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-edge bg-app-bg p-5 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="memory-panel-title"
+      (click)="$event.stopPropagation()"
+    >
+      <div class="mb-3 flex items-center justify-between">
+        <h2 id="memory-panel-title" class="m-0 text-base font-semibold">ความจำที่ระบบจำไว้</h2>
+        <button class="cursor-pointer rounded-md border-0 bg-transparent p-1 text-muted hover:text-content" type="button" title="ปิด" (click)="store.toggleMemoryPanel()">×</button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        @if (store.memoriesLoading()) {
+          <p class="text-sm text-muted">กำลังโหลด...</p>
+        } @else if (store.memories().length === 0) {
+          <p class="text-sm text-muted">ยังไม่มีความจำที่บันทึกไว้</p>
+        } @else {
+          <p class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">ทั่วไป (ทุกโปรเจกต์)</p>
+          @for (memory of store.memories(); track memory.id) {
+            @if (memory.scope === 'global') {
+              <div class="mb-2 flex items-start justify-between gap-2 rounded-md border border-edge px-3 py-2">
+                <span class="text-sm leading-6 text-content">{{ memory.text }}</span>
+                <button class="shrink-0 cursor-pointer border-0 bg-transparent p-1 text-faint hover:text-danger" type="button" title="ลบความจำนี้" (click)="deleteMemory(memory.id)">×</button>
+              </div>
+            }
+          }
+          <p class="mb-1.5 mt-3 text-[11px] font-medium uppercase tracking-wide text-faint">เฉพาะโปรเจกต์นี้ ({{ store.activeTask()?.workspacePath }})</p>
+          @for (memory of store.memories(); track memory.id) {
+            @if (memory.scope === 'workspace' && memory.workspacePath === store.activeTask()?.workspacePath) {
+              <div class="mb-2 flex items-start justify-between gap-2 rounded-md border border-edge px-3 py-2">
+                <span class="text-sm leading-6 text-content">{{ memory.text }}</span>
+                <button class="shrink-0 cursor-pointer border-0 bg-transparent p-1 text-faint hover:text-danger" type="button" title="ลบความจำนี้" (click)="deleteMemory(memory.id)">×</button>
+              </div>
+            }
+          }
+        }
+      </div>
+    </section>
+  </div>
+}
 
 @if (isDeleteConfirmationOpen()) {
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4" role="presentation" (click)="cancelDeleteChat()">

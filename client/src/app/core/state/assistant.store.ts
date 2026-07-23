@@ -4,7 +4,7 @@ import { AssistantApiService } from '../api/assistant-api.service';
 import { TaskEventsService } from '../api/task-events.service';
 import { DEFAULT_WORKSPACE_PATH } from '../config/api.config';
 import { ActivityItem } from '../models/assistant.models';
-import type { AgentEvent, AssistantTask, ChatMessage, PermissionRequest, TaskStatus } from '@assistant-app/contracts';
+import type { AgentEvent, AssistantTask, ChatMessage, MemoryRecord, PermissionRequest, TaskStatus } from '@assistant-app/contracts';
 
 @Injectable({ providedIn: 'root' })
 export class AssistantStore {
@@ -17,7 +17,6 @@ export class AssistantStore {
   private workStartedAt = 0;
 
   readonly sidebarCollapsed = signal(false);
-  readonly workspacePanelOpen = signal(false);
   readonly tasks = signal<AssistantTask[]>([]);
   readonly activeTaskId = signal<string | null>(null);
   readonly activities = signal<ActivityItem[]>([]);
@@ -28,6 +27,9 @@ export class AssistantStore {
   readonly activeModel = signal('กำลังโหลด...');
   readonly modelAvailable = signal<boolean | null>(null);
   readonly workingSeconds = signal(0);
+  readonly memoryPanelOpen = signal(false);
+  readonly memories = signal<MemoryRecord[]>([]);
+  readonly memoriesLoading = signal(false);
 
   readonly activeTask = computed(() => this.tasks().find((task) => task.id === this.activeTaskId()) ?? null);
   readonly activeTaskTitle = computed(() => this.activeTask()?.title ?? 'งานใหม่');
@@ -56,7 +58,6 @@ export class AssistantStore {
   }
 
   toggleSidebar(): void { this.sidebarCollapsed.update((value) => !value); }
-  toggleWorkspacePanel(): void { this.workspacePanelOpen.update((value) => !value); }
 
   refreshModel(): void {
     this.modelAvailable.set(null);
@@ -177,6 +178,33 @@ export class AssistantStore {
         this.newTask();
       },
       error: () => this.handleError('เคลียร์ประวัติแชทไม่สำเร็จ'),
+    });
+  }
+
+  toggleMemoryPanel(): void {
+    const next = !this.memoryPanelOpen();
+    this.memoryPanelOpen.set(next);
+    if (next) this.loadMemories();
+  }
+
+  loadMemories(): void {
+    this.memoriesLoading.set(true);
+    this.api.listMemories().subscribe({
+      next: ({ data }) => {
+        this.memories.set(data);
+        this.memoriesLoading.set(false);
+      },
+      error: () => {
+        this.memoriesLoading.set(false);
+        this.handleError('โหลดความจำไม่สำเร็จ');
+      },
+    });
+  }
+
+  deleteMemory(id: string): void {
+    this.api.deleteMemory(id).subscribe({
+      next: ({ data }) => this.memories.set(data),
+      error: () => this.handleError('ลบความจำไม่สำเร็จ'),
     });
   }
 

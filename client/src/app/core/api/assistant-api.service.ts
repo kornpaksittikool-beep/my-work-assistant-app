@@ -3,7 +3,7 @@ import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../config/api.config';
 import { HealthStatus } from '../models/assistant.models';
-import type { ApiSuccessEnvelope as ApiEnvelope, AssistantTask } from '@assistant-app/contracts';
+import type { ApiSuccessEnvelope as ApiEnvelope, AssistantTask, MemoryRecord } from '@assistant-app/contracts';
 
 @Injectable({ providedIn: 'root' })
 export class AssistantApiService {
@@ -56,6 +56,16 @@ export class AssistantApiService {
   deleteAllTasks(): Observable<ApiEnvelope<AssistantTask[]>> {
     return this.http.delete<ApiEnvelope<AssistantTask[]>>(
       `${API_BASE_URL}/tasks`,
+    );
+  }
+
+  listMemories(): Observable<ApiEnvelope<MemoryRecord[]>> {
+    return this.http.get<ApiEnvelope<MemoryRecord[]>>(`${API_BASE_URL}/memory`);
+  }
+
+  deleteMemory(id: string): Observable<ApiEnvelope<MemoryRecord[]>> {
+    return this.http.delete<ApiEnvelope<MemoryRecord[]>>(
+      `${API_BASE_URL}/memory/${id}`,
     );
   }
 }
