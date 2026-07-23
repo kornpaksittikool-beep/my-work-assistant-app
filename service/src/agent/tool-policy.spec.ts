@@ -1,6 +1,7 @@
 import {
   evaluateToolPolicy,
   FILE_METADATA_POLICY_PROMPT,
+  FILE_MUTATION_UNAVAILABLE_RESPONSE,
 } from './tool-policy';
 
 describe('tool policy', () => {
@@ -20,6 +21,19 @@ describe('tool policy', () => {
       requiresFileEvidence: false,
       isMutation: true,
     });
+  });
+
+  it('does not mistake a general creation request for a file mutation', () => {
+    expect(evaluateToolPolicy('ช่วยสร้างไอเดียสำหรับแผนงาน')).toMatchObject({
+      isMutation: false,
+    });
+  });
+
+  it('explains unsupported file mutations without blaming OS permissions', () => {
+    expect(FILE_MUTATION_UNAVAILABLE_RESPONSE).toContain(
+      'ยังไม่มีเครื่องมือเขียน แก้ไข ย้าย หรือลบไฟล์',
+    );
+    expect(FILE_MUTATION_UNAVAILABLE_RESPONSE).not.toContain('ผู้ดูแลระบบ');
   });
 
   it('keeps modification-time lookups read-only', () => {
@@ -48,8 +62,8 @@ describe('tool policy', () => {
   });
 
   it('does not mistake a directory-list summary for reading file contents', () => {
-    expect(
-      evaluateToolPolicy('สแกน Desktop แล้วสรุปสิ่งที่พบ'),
-    ).toMatchObject({ requestsFileContent: false });
+    expect(evaluateToolPolicy('สแกน Desktop แล้วสรุปสิ่งที่พบ')).toMatchObject({
+      requestsFileContent: false,
+    });
   });
 });

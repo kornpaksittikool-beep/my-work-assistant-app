@@ -8,9 +8,7 @@ describe('file metadata formatting', () => {
   it('uses consistent byte, KB and MB labels', () => {
     expect(formatFileSize(233)).toBe('233 ไบต์');
     expect(formatFileSize(66_285)).toBe('64.7 KB (66,285 ไบต์)');
-    expect(formatFileSize(2 * 1024 * 1024)).toBe(
-      '2.00 MB (2,097,152 ไบต์)',
-    );
+    expect(formatFileSize(2 * 1024 * 1024)).toBe('2.00 MB (2,097,152 ไบต์)');
   });
 
   it('formats ISO timestamps as local DD/MM/YYYY HH:mm', () => {
@@ -23,7 +21,9 @@ describe('file metadata formatting', () => {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
-    }).format(expectedDate).replace(',', '');
+    })
+      .format(expectedDate)
+      .replace(',', '');
     expect(formatLocalDateTime(value)).toBe(expected);
   });
 

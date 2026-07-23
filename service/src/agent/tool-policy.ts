@@ -3,6 +3,8 @@ const FILE_LOOKUP_INTENT =
   /ไฟล์|โฟลเดอร์|เอกสาร|หา|ค้นหา|ดู|สแกน|มีอะไร|อยู่ที่ไหน|\bfile\b|\bfolder\b|\bdirectory\b|\bfind\b|\bsearch\b|\bscan\b|\blist\b|\bshow\b/i;
 const FILE_MUTATION_INTENT =
   /ลบ|แก้ไข|เปลี่ยน|สร้าง|ย้าย|คัดลอก|เขียน|บันทึก|\bdelete\b|\bremove\b|\bedit\b|\bmodify\b|\bwrite\b|\bcreate\b|\brename\b|\bmove\b|\bcopy\b/i;
+const FILE_TARGET_INTENT =
+  /ไฟล์|โฟลเดอร์|เอกสาร|พาธ|ตำแหน่ง|\bfile\b|\bfolder\b|\bdirectory\b|\bpath\b|[a-zA-Z]:[\\/]/i;
 const READ_ONLY_MODIFICATION_TIME =
   /(?:ไฟล์|โฟลเดอร์|เอกสาร).{0,60}(?:แก้ไข|เปลี่ยนแปลง).{0,40}(?:วันนี้|เมื่อวาน|วันที่|วัน|ชั่วโมง|สัปดาห์|อาทิตย์|เดือน|ปี)|\b(?:files?|folders?|documents?).{0,60}\b(?:modified|changed).{0,40}\b(?:today|yesterday|date|day|hours?|weeks?|months?|years?)\b/i;
 const FILE_CONTENT_REQUEST =
@@ -21,10 +23,12 @@ export interface ToolPolicyDecision {
 export function evaluateToolPolicy(userText: string): ToolPolicyDecision {
   const isMutation =
     FILE_MUTATION_INTENT.test(userText) &&
+    FILE_TARGET_INTENT.test(userText) &&
     !READ_ONLY_MODIFICATION_TIME.test(userText);
   return {
     requiresFileEvidence:
-      (FILE_LOOKUP_INTENT.test(userText) || FILE_CONTENT_REQUEST.test(userText)) &&
+      (FILE_LOOKUP_INTENT.test(userText) ||
+        FILE_CONTENT_REQUEST.test(userText)) &&
       !isMutation,
     isMutation,
     isDirectoryListing: DIRECTORY_LIST_INTENT.test(userText),
@@ -37,6 +41,9 @@ export const FILE_CONTENT_UNAVAILABLE_RESPONSE =
 
 export const UNVERIFIED_FILE_RESPONSE =
   'ยังตอบเรื่องไฟล์นี้ไม่ได้ เพราะระบบยังไม่ได้รับผลตรวจสอบจริงจากเครื่องมือ จึงจะไม่เดาหรือสร้างรายชื่อไฟล์ขึ้นมา กรุณาระบุชื่อไฟล์ โฟลเดอร์ หรือ path ให้ชัดเจนขึ้นแล้วลองอีกครั้งครับ';
+
+export const FILE_MUTATION_UNAVAILABLE_RESPONSE =
+  'ระบบเวอร์ชันนี้รองรับเฉพาะการสแกน ค้นหา และอ่านไฟล์ ยังไม่มีเครื่องมือเขียน แก้ไข ย้าย หรือลบไฟล์ จึงไม่ได้ดำเนินการใด ๆ กับไฟล์ครับ';
 
 export const FILE_METADATA_POLICY_PROMPT =
   'FILE TOOL POLICY: For every file/folder lookup, listing, search, or claim about what exists, use scan_directory or search_files in the current turn before answering. Use read_file before every claim about actual file content, and only summarize the content field returned by read_file in the current turn. Never invent a tool result. When the user asks for file types, pass them through search_files.extensions, not as filename queries. scan_directory/search_files expose presentation-ready Thai metadata fields only (ชื่อ, ตำแหน่ง, ประเภท, ขนาด, แก้ไขล่าสุด). Copy ขนาด and แก้ไขล่าสุด exactly as provided: do not translate units, convert timezones, add UTC, or reformat them. Never infer content from filename, extension, path, size, or timestamps.';
