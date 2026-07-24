@@ -6,6 +6,7 @@ import { validate } from './configs/env.validation';
 import { FilesModule } from './files/files.module';
 import { OllamaModule } from './ollama/ollama.module';
 import { TasksModule } from './tasks/tasks.module';
+import { ScanConfigModule } from './scan-config/scan-config.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { TasksModule } from './tasks/tasks.module';
     OllamaModule,
     TasksModule,
     FilesModule,
+    ScanConfigModule,
   ],
   controllers: [AppController],
   providers: [AppService],

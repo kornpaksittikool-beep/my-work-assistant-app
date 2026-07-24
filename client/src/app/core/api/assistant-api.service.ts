@@ -3,7 +3,7 @@ import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../config/api.config';
 import { HealthStatus } from '../models/assistant.models';
-import type { ApiSuccessEnvelope as ApiEnvelope, AssistantTask, MemoryRecord } from '@assistant-app/contracts';
+import type { ApiSuccessEnvelope as ApiEnvelope, AssistantTask, MemoryRecord, ScanRoot, ScanRootBrowseResult } from '@assistant-app/contracts';
 
 @Injectable({ providedIn: 'root' })
 export class AssistantApiService {
@@ -66,6 +66,35 @@ export class AssistantApiService {
   deleteMemory(id: string): Observable<ApiEnvelope<MemoryRecord[]>> {
     return this.http.delete<ApiEnvelope<MemoryRecord[]>>(
       `${API_BASE_URL}/memory/${id}`,
+    );
+  }
+
+  listScanRoots(): Observable<ApiEnvelope<ScanRoot[]>> {
+    return this.http.get<ApiEnvelope<ScanRoot[]>>(
+      `${API_BASE_URL}/scan-config/roots`,
+    );
+  }
+
+  browseScanRoots(path?: string): Observable<ApiEnvelope<ScanRootBrowseResult>> {
+    const params = path ? { path } : undefined;
+    return this.http.get<ApiEnvelope<ScanRootBrowseResult>>(
+      `${API_BASE_URL}/scan-config/roots/browse`,
+      { params },
+    );
+  }
+
+  addScanRoot(path: string): Observable<ApiEnvelope<ScanRoot>> {
+    return this.http.post<ApiEnvelope<ScanRoot>>(
+      `${API_BASE_URL}/scan-config/roots`,
+      { path },
+    );
+  }
+
+  removeScanRoot(path: string): Observable<ApiEnvelope<ScanRoot[]>> {
+    return this.http.request<ApiEnvelope<ScanRoot[]>>(
+      'DELETE',
+      `${API_BASE_URL}/scan-config/roots`,
+      { body: { path } },
     );
   }
 }

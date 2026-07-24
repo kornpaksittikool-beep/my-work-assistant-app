@@ -74,10 +74,13 @@
       }
     </nav>
 
-    <div class="grid gap-[9px] max-[900px]:hidden">
+    <div class="grid grid-cols-[1fr_34px] gap-[9px] max-[900px]:hidden">
       <div class="flex min-h-[42px] items-center rounded-[7px] border border-edge px-[11px] text-xs text-muted">
         <span class="mr-2 size-2 rounded-full bg-success"></span> Ollama ทำงานในเครื่อง
       </div>
+      <a class="grid size-[34px] cursor-pointer place-items-center rounded-[7px] border-0 bg-transparent p-0 text-muted no-underline hover:bg-surface-2 hover:text-content" routerLink="/settings" routerLinkActive="bg-surface-2 text-content" aria-label="ตั้งค่า" title="ตั้งค่าโฟลเดอร์ที่อนุญาตให้สแกน">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </a>
     </div>
   }
 </aside>

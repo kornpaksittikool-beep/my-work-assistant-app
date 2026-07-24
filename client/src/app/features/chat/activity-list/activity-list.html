@@ -1,7 +1,7 @@
-<div class="mt-[19px] grid gap-[7px]">
+<div class="mt-2.5 grid gap-1">
   @for (activity of activities(); track activity.id) {
-    <div class="flex min-h-[50px] w-full items-center gap-[11px] rounded-[7px] border border-edge-strong bg-transparent px-[15px] text-muted">
-      <span class="w-[22px] text-center text-base" [class]="activity.state === 'working' ? 'animate-agent-spin text-accent' : 'text-success'">
+    <div class="flex min-h-[34px] w-full items-center gap-2 rounded-md border border-edge-strong bg-transparent px-2.5 text-[12px] text-muted">
+      <span class="w-[16px] text-center text-[13px]" [class]="activity.state === 'working' ? 'animate-agent-spin text-accent' : 'text-success'">
         @if (activity.state === 'done') { ✓ } @else if (activity.state === 'working') { ◌ } @else { ◷ }
       </span>
       <span class="flex-1 text-content">{{ activity.label }}</span><small class="text-muted">{{ activity.detail }}</small>

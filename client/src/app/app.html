@@ -3,7 +3,9 @@
   [class]="store.sidebarCollapsed() ? '!grid-cols-[68px_minmax(0,1fr)]' : ''"
 >
   <app-sidebar />
-  <app-chat-workspace />
+  <div class="min-w-0">
+    <router-outlet />
+  </div>
   @if (store.error(); as error) {
     <div class="fixed right-5 bottom-5 z-50 flex max-w-[min(420px,calc(100vw-40px))] items-center gap-2.5 rounded-lg border border-danger/35 bg-[#fdeceb] px-3.5 py-3 text-[13px] text-[#9a3a37] shadow-[0_12px_35px_rgba(0,0,0,.12)]">
       <span class="grid size-5 place-items-center rounded-full bg-danger font-semibold text-white">!</span>

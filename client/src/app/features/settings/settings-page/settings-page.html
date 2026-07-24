@@ -1,0 +1,137 @@
+<div class="mx-auto flex h-dvh max-w-[900px] flex-col gap-6 overflow-y-auto p-8 max-[620px]:p-4">
+  <div>
+    <a routerLink="/" class="text-sm text-muted hover:text-content">← กลับไปแชท</a>
+    <h1 class="mt-2 text-xl font-semibold text-content">โฟลเดอร์ที่อนุญาตให้สแกน</h1>
+    <p class="mt-1 text-sm text-muted">
+      เลือกโฟลเดอร์ที่ให้ผู้ช่วยค้นหาไฟล์ได้ ปิดหรือลบโฟลเดอร์ที่เป็นข้อมูลส่วนตัวได้ทุกเมื่อ
+      ไดรฟ์หรือโฟลเดอร์ที่เครื่องไม่ให้สิทธิ์เข้าถึงจะถูกปิดใช้งานอัตโนมัติ
+    </p>
+  </div>
+
+  @if (error(); as message) {
+    <div class="flex items-center gap-2.5 rounded-lg border border-danger/35 bg-[#fdeceb] px-3.5 py-3 text-[13px] text-[#9a3a37]">
+      <span class="grid size-5 shrink-0 place-items-center rounded-full bg-danger font-semibold text-white">!</span>
+      {{ message }}
+      <button class="ml-auto cursor-pointer border-0 bg-transparent" type="button" (click)="error.set(null)">×</button>
+    </div>
+  }
+
+  <div>
+    <div class="mb-2 flex items-center justify-between">
+      <h2 class="text-sm font-medium text-content">โฟลเดอร์ที่อนุญาตอยู่ตอนนี้</h2>
+      <button
+        class="cursor-pointer rounded-md border border-edge-strong bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+        type="button"
+        (click)="openBrowser()"
+      >
+        + เลือกโฟลเดอร์
+      </button>
+    </div>
+
+    @if (loading()) {
+      <p class="text-sm text-muted">กำลังโหลด...</p>
+    } @else if (roots().length === 0) {
+      <p class="rounded-lg border border-dashed border-edge px-3.5 py-3 text-sm text-muted">
+        ยังไม่มีโฟลเดอร์ที่อนุญาตให้สแกน กด "+ เลือกโฟลเดอร์" เพื่อเพิ่ม
+      </p>
+    } @else {
+      <ul class="flex flex-col gap-2">
+        @for (root of roots(); track root.path) {
+          <li class="flex items-center justify-between gap-2 rounded-lg border border-edge-strong bg-surface px-3.5 py-2.5">
+            <div class="min-w-0">
+              <span class="block truncate text-sm text-content">{{ root.path }}</span>
+              @if (!root.accessible) {
+                <small class="text-faint" title="process นี้ไม่มีสิทธิ์อ่านโฟลเดอร์นี้">ไม่มีสิทธิ์เข้าถึง</small>
+              }
+            </div>
+            <button
+              class="shrink-0 cursor-pointer rounded-md border border-edge px-2.5 py-1 text-xs text-muted hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              [disabled]="pendingPath() === root.path"
+              (click)="removeRoot(root)"
+            >
+              ลบ
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </div>
+
+</div>
+
+@if (browserOpen()) {
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4" role="presentation" (click)="closeBrowser()">
+    <section
+      class="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-edge bg-app-bg p-5 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="folder-browser-title"
+      (click)="$event.stopPropagation()"
+    >
+      <div class="mb-3 flex items-center justify-between">
+        <h2 id="folder-browser-title" class="m-0 text-base font-semibold">เลือกโฟลเดอร์ที่จะอนุญาตให้สแกน</h2>
+        <button class="cursor-pointer rounded-md border-0 bg-transparent p-1 text-muted hover:text-content" type="button" title="ปิด" (click)="closeBrowser()">×</button>
+      </div>
+
+      <div class="mb-3 flex items-center gap-2 text-xs">
+        <button
+          class="cursor-pointer rounded-md border border-edge px-2 py-1 text-muted hover:border-accent/60 hover:text-content disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          [disabled]="browsePath() === null || browseLoading()"
+          (click)="navigateToDrives()"
+        >
+          ไดรฟ์ทั้งหมด
+        </button>
+        <button
+          class="cursor-pointer rounded-md border border-edge px-2 py-1 text-muted hover:border-accent/60 hover:text-content disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          [disabled]="(!browseParent() && browsePath() === null) || browseLoading()"
+          (click)="navigateUp()"
+        >
+          ← ย้อนกลับ
+        </button>
+        <span class="min-w-0 flex-1 truncate text-muted" [title]="browsePath() ?? ''">{{ browsePath() ?? 'ไดรฟ์ทั้งหมด' }}</span>
+      </div>
+
+      @if (browseError(); as message) {
+        <p class="mb-2 text-xs text-danger">{{ message }}</p>
+      }
+
+      <div class="flex-1 overflow-y-auto rounded-lg border border-edge">
+        @if (browseLoading()) {
+          <p class="p-3 text-sm text-muted">กำลังโหลด...</p>
+        } @else if (browseEntries().length === 0) {
+          <p class="p-3 text-sm text-muted">ไม่มีโฟลเดอร์ย่อยในนี้</p>
+        } @else {
+          @for (entry of browseEntries(); track entry.path) {
+            <button
+              type="button"
+              class="flex w-full cursor-pointer items-center gap-2 border-b border-edge px-3 py-2 text-left text-sm last:border-b-0 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+              [disabled]="!entry.accessible"
+              (click)="navigateInto(entry)"
+            >
+              <span aria-hidden="true">📁</span>
+              <span class="truncate">{{ entry.name }}</span>
+              @if (!entry.accessible) {
+                <small class="ml-auto shrink-0 text-faint">ไม่มีสิทธิ์เข้าถึง</small>
+              }
+            </button>
+          }
+        }
+      </div>
+
+      <div class="mt-4 flex justify-end gap-2">
+        <button class="cursor-pointer rounded-md border border-edge bg-transparent px-3 py-2 text-sm text-muted" type="button" (click)="closeBrowser()">ยกเลิก</button>
+        <button
+          class="cursor-pointer rounded-md border border-edge-strong bg-accent px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          [disabled]="browsePath() === null || addingCurrentFolder()"
+          (click)="addCurrentFolder()"
+        >
+          เลือกโฟลเดอร์นี้
+        </button>
+      </div>
+    </section>
+  </div>
+}

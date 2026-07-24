@@ -46,6 +46,10 @@ export class EnvironmentVariables {
   SCAN_MCP_URL?: string;
 
   @IsOptional()
+  @IsUrl({ require_tld: false })
+  SCAN_REST_URL?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(20)

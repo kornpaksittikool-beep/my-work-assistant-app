@@ -1,9 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AssistantStore } from '../../core/state/assistant.store';
 import { formatLocalTime } from '../../core/utils/date-time';
 
 @Component({
   selector: 'app-sidebar',
+  imports: [RouterLink, RouterLinkActive],
   templateUrl: './sidebar.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
