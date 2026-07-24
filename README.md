@@ -96,7 +96,7 @@ Ollama เป็น runtime สำหรับรันโมเดล AI ภา
 
 ### 1-scan-file
 
-`../1-scan-file/` เป็นเครื่องมือแยกสำหรับ filesystem โดยเปิด MCP tool `scan_directory` (ดูระดับบนสุด), `search_files` (ค้นหา recursive พร้อม extension/ช่วงวัน) และ `read_file` (อ่าน text/markdown/json และสกัดข้อความจาก PDF/Word/Excel/PowerPoint แบบจำกัดขนาด) ให้ Agent Service เรียกใช้งาน
+`../1-scan-file/` เป็นเครื่องมือแยกสำหรับ filesystem โดยเปิด MCP tool `scan_directory` (ดูระดับบนสุด), `search_files` (ค้นหา recursive พร้อม extension/ช่วงวัน), `read_file` (อ่าน text/markdown/json และสกัดข้อความจาก PDF/Word/Excel/PowerPoint แบบจำกัดขนาด) และ `list_scan_roots` (คืนรายชื่อโฟลเดอร์/ไดรฟ์ที่อนุญาตให้สแกนอยู่ตอนนี้ ไม่รับ argument) ให้ Agent Service เรียกใช้งาน
 
 เครื่องมือนี้รับผิดชอบ:
 
@@ -158,6 +158,7 @@ Open WebUI ใน `../dockers/` ใช้สำหรับทดลองแล
 - เปิดไฟล์/โฟลเดอร์ที่พบใน Explorer ได้จากลิงก์ที่แนบอัตโนมัติในคำตอบ (ผ่าน `GET /api/files/open`)
 - ประวัติ tool ที่ใช้ในแต่ละคำตอบถูกเก็บติดกับข้อความนั้นแล้ว ดูย้อนหลังได้จากหน้าแชท ไม่ใช่แค่ feed ชั่วคราวระหว่าง agent กำลังทำงาน
 - **ระบบ memory ข้ามเซสชัน** (`service/src/memory/`) — จำ preference ของผู้ใช้แบบ global และข้อมูลเฉพาะโปรเจกต์แบบผูกกับ workspacePath แยกกัน หลังทุกคำตอบจบ ระบบจะให้ Ollama อีก call หนึ่งแบบ structured-output ตัดสินใจว่ามีอะไรควรจำไหม (ส่วนใหญ่ตอบว่าไม่มี) แล้วเก็บลงไฟล์ JSON แบบเดียวกับ task persistence ก่อนเริ่มคุยรอบใหม่ ระบบจะดึงความจำที่เกี่ยวข้องมาแปะเป็น system prompt ให้เอง ไม่ต้องพึ่งผู้ใช้พิมพ์บอกซ้ำ — งานเขียนความจำไม่ผ่านหน้าจอขออนุญาต (permission card) เพราะเป็น state ภายในแอปเอง ไม่ใช่การแตะไฟล์/ระบบภายนอก และถ้า extraction call ล้มเหลวก็จะไม่กระทบคำตอบหลักที่ผู้ใช้เห็น ยังไม่มี UI ให้ดู/แก้/ลบความจำ (v1 เป็น backend-only)
+- Agent เรียก `list_scan_roots` ได้แล้ว — ตอบคำถามว่าตอนนี้อนุญาตให้สแกนโฟลเดอร์/ไดรฟ์ไหนบ้างจากรายการจริง (อันเดียวกับหน้า settings) แทนที่จะเดาหรือปฏิเสธเฉยๆ ไม่ต้องขอ permission เพิ่มเพราะเป็น config ที่เห็นอยู่แล้ว ไม่ใช่การอ่านไฟล์จริง; มี fallback แบบ deterministic ไว้ด้วยกรณี local model เล็กไม่ยอมเรียก tool นี้เอง
 
 ## หลักการสำคัญ
 

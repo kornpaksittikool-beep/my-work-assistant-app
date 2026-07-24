@@ -7,7 +7,7 @@ NestJS Agent Backend สำหรับ Local Assistant ทำหน้าที
 - สร้างและเก็บ task/conversation สำหรับ MVP
 - ส่งข้อความไปยัง Ollama พร้อม tool definition
 - ควบคุม agent flow และสถานะของ task
-- เรียก `scan_directory`/`search_files`/`read_file` ผ่าน Scan MCP; `search_files` รองรับ extension และช่วงวันปฏิทิน ส่วน `read_file` อ่าน text/markdown/json และสกัดข้อความจาก PDF/Word/Excel/PowerPoint แบบจำกัดขนาด
+- เรียก `scan_directory`/`search_files`/`read_file`/`list_scan_roots` ผ่าน Scan MCP; `search_files` รองรับ extension และช่วงวันปฏิทิน, `read_file` อ่าน text/markdown/json และสกัดข้อความจาก PDF/Word/Excel/PowerPoint แบบจำกัดขนาด, `list_scan_roots` คืนรายชื่อโฟลเดอร์/ไดรฟ์ที่อนุญาตให้สแกนอยู่ตอนนี้ (ไม่รับ argument, ไม่ต้องขอ permission)
 - เปิดไฟล์/โฟลเดอร์ที่พบใน Explorer ผ่าน `GET /api/files/open` — ลิงก์ถูกแนบอัตโนมัติในคำตอบเมื่อ tool เจอไฟล์จริง
 - หยุดรอเมื่อ tool ต้องการอ่าน path นอก workspace
 - รับการอนุญาตหรือปฏิเสธจากผู้ใช้ แล้วทำงานต่อหรือหยุด
