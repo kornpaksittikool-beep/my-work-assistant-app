@@ -87,6 +87,7 @@ export class OllamaService {
             this.scanDirectoryTool(),
             this.searchFilesTool(),
             this.readFileTool(),
+            this.listScanRootsTool(),
           ],
           options: { num_ctx: this.numCtx },
         }),
@@ -395,6 +396,18 @@ export class OllamaService {
             },
           },
         },
+      },
+    };
+  }
+
+  private listScanRootsTool(): Record<string, unknown> {
+    return {
+      type: 'function',
+      function: {
+        name: 'list_scan_roots',
+        description:
+          'List the folders/drives the user currently allows this assistant to scan, search, and read files from. Use this whenever the user asks which folders, drives, or locations you can access or scan - never guess or invent an answer to that question. Takes no arguments.',
+        parameters: { type: 'object', properties: {} },
       },
     };
   }

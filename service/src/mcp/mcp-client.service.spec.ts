@@ -195,4 +195,37 @@ describe('McpClientService', () => {
       );
     });
   });
+
+  describe('listScanRoots', () => {
+    it('calls the list_scan_roots tool with no arguments and returns parsed JSON', async () => {
+      mockFetchText(
+        JSON.stringify({
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  roots: [{ path: 'D:\\', accessible: true }],
+                }),
+              },
+            ],
+          },
+        }),
+      );
+      const service = createService();
+
+      const result = await service.listScanRoots();
+
+      expect(result).toEqual({ roots: [{ path: 'D:\\', accessible: true }] });
+      const [, requestInit] = (global.fetch as jest.Mock).mock.calls[0] as [
+        string,
+        { body: string },
+      ];
+      const body = JSON.parse(requestInit.body) as {
+        params: { name: string; arguments: unknown };
+      };
+      expect(body.params.name).toBe('list_scan_roots');
+      expect(body.params.arguments).toEqual({});
+    });
+  });
 });

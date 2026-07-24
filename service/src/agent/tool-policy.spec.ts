@@ -2,6 +2,7 @@ import {
   evaluateToolPolicy,
   FILE_METADATA_POLICY_PROMPT,
   FILE_MUTATION_UNAVAILABLE_RESPONSE,
+  ROOTS_QUERY_INTENT,
 } from './tool-policy';
 
 describe('tool policy', () => {
@@ -77,5 +78,27 @@ describe('tool policy', () => {
     expect(evaluateToolPolicy('ลองหาเป็น gsheet ดูสิ')).toMatchObject({
       requiresFileEvidence: true,
     });
+  });
+
+  it('detects a question about which folders/drives are allowed to be scanned', () => {
+    expect(
+      ROOTS_QUERY_INTENT.test('scan_directory สามารถ scan ที่ไหนได้บ้าง'),
+    ).toBe(true);
+    expect(
+      ROOTS_QUERY_INTENT.test('อยากรู้ว่า สามารถ scan ไดฟ์ไหนได้บ้างอะ'),
+    ).toBe(true);
+    expect(ROOTS_QUERY_INTENT.test('which folders can you scan?')).toBe(true);
+    expect(ROOTS_QUERY_INTENT.test('โฟลเดอร์ไหนที่อนุญาตให้สแกนบ้าง')).toBe(
+      true,
+    );
+  });
+
+  it('does not mistake a specific file/folder lookup for a roots-capability question', () => {
+    expect(ROOTS_QUERY_INTENT.test('ไฟล์ report.pdf อยู่ที่ไหน')).toBe(false);
+    expect(ROOTS_QUERY_INTENT.test('ช่วยสแกน Desktop ให้หน่อย')).toBe(false);
+  });
+
+  it('mentions list_scan_roots as the tool for the allowed-locations question', () => {
+    expect(FILE_METADATA_POLICY_PROMPT).toContain('list_scan_roots');
   });
 });

@@ -69,6 +69,7 @@ describe('AgentService', () => {
       scanDirectory: jest.fn(),
       searchFiles: jest.fn(),
       readFile: jest.fn(),
+      listScanRoots: jest.fn(),
     } as unknown as McpClientService;
     const permissions = {
       create: jest.fn(),
@@ -2493,6 +2494,61 @@ describe('AgentService', () => {
       undefined,
       expect.anything(),
     );
+  });
+
+  describe('list_scan_roots', () => {
+    it('executes list_scan_roots with no permission prompt when the model calls it directly', async () => {
+      const { agent, tasks, permissions, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock)
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [{ function: { name: 'list_scan_roots', arguments: {} } }],
+        })
+        .mockResolvedValueOnce({
+          content: 'ตอนนี้สแกนได้ที่ D:\\ และ C:\\',
+          toolCalls: [],
+        });
+      (mcp.listScanRoots as jest.Mock).mockResolvedValue({
+        roots: [
+          { path: 'D:\\', accessible: true },
+          { path: 'C:\\', accessible: true },
+        ],
+      });
+
+      agent.start(task.id, 'สามารถ scan ไดฟ์ไหนได้บ้างอะ');
+      await flush();
+
+      expect(mcp.listScanRoots).toHaveBeenCalledWith();
+      expect(permissions.create).not.toHaveBeenCalled();
+      expect(tasks.addMessage).toHaveBeenCalledWith(
+        task.id,
+        'assistant',
+        'ตอนนี้สแกนได้ที่ D:\\ และ C:\\',
+        undefined,
+        expect.anything(),
+      );
+      expect(tasks.setStatus).toHaveBeenCalledWith(task.id, 'completed');
+    });
+
+    it('falls back to calling list_scan_roots when the model ignores the tool retry for an allowed-locations question', async () => {
+      const { agent, permissions, ollama, mcp, task } = createAgent();
+      (ollama.chat as jest.Mock).mockResolvedValue({
+        content: 'ไม่แน่ใจว่าเข้าถึงโฟลเดอร์ไหนได้บ้าง',
+        toolCalls: [],
+      });
+      (mcp.listScanRoots as jest.Mock).mockResolvedValue({
+        roots: [{ path: 'D:\\', accessible: true }],
+      });
+
+      agent.start(task.id, 'scan_directory สามารถ scan ที่ไหนได้บ้าง');
+      await flush();
+
+      expect(ollama.chat).toHaveBeenCalledTimes(3);
+      expect(mcp.listScanRoots).toHaveBeenCalledWith();
+      // No path is involved, so this recovery must never go through the
+      // permission flow the way the special-folder/absolute-path recoveries do.
+      expect(permissions.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('memory', () => {

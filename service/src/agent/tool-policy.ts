@@ -20,6 +20,14 @@ const FILE_TYPE_MENTION =
 export const DIRECTORY_LIST_INTENT =
   /สแกน|ดู(?:ใน|ข้างใน)|มีอะไร|รายการ|ระดับบนสุด|\bscan\b|\blist\b|\bshow\b|\bcontents?\b/i;
 
+/** Asking about scan *capability* itself (which folders/drives are allowed)
+ * rather than looking up a specific named file/folder - see
+ * list_scan_roots in McpClientService/OllamaService. Gates the deterministic
+ * fallback in AgentService.step() for when a small local model ignores the
+ * tool nudge and answers "I don't know" instead of calling list_scan_roots. */
+export const ROOTS_QUERY_INTENT =
+  /(?:scan|สแกน|ค้นหา|search|เข้าถึง|access).{0,20}(?:ที่ไหน|ไหน(?:ๆ)?(?:ได้)?บ้าง|ไดรฟ์ไหน|ไดฟ์ไหน|โฟลเดอร์ไหน)|(?:ที่ไหน|ไดรฟ์ไหน|ไดฟ์ไหน|โฟลเดอร์ไหน).{0,20}(?:scan|สแกน|เข้าถึง|access)|(?:ไดรฟ์|ไดฟ์|โฟลเดอร์|\bdrives?\b|\bfolders?\b|\broots?\b).{0,20}(?:อนุญาต|\ballow(?:ed)?\b)|which (?:folders?|drives?|roots?)\b|what (?:folders?|drives?|roots?)\b/i;
+
 export interface ToolPolicyDecision {
   requiresFileEvidence: boolean;
   isMutation: boolean;
@@ -54,4 +62,4 @@ export const FILE_MUTATION_UNAVAILABLE_RESPONSE =
   'ระบบเวอร์ชันนี้รองรับเฉพาะการสแกน ค้นหา และอ่านไฟล์ ยังไม่มีเครื่องมือเขียน แก้ไข ย้าย หรือลบไฟล์ จึงไม่ได้ดำเนินการใด ๆ กับไฟล์ครับ';
 
 export const FILE_METADATA_POLICY_PROMPT =
-  'FILE TOOL POLICY: For every file/folder lookup, listing, search, or claim about what exists, use scan_directory or search_files in the current turn before answering. Use read_file before every claim about actual file content, and only summarize the content field returned by read_file in the current turn. Never invent a tool result. When the user asks for file types, pass them through search_files.extensions, not as filename queries. scan_directory/search_files expose presentation-ready Thai metadata fields only (ชื่อ, ตำแหน่ง, ประเภท, ขนาด, แก้ไขล่าสุด). Copy ขนาด and แก้ไขล่าสุด exactly as provided: do not translate units, convert timezones, add UTC, or reformat them. Never infer content from filename, extension, path, size, or timestamps.';
+  'FILE TOOL POLICY: For every file/folder lookup, listing, search, or claim about what exists, use scan_directory or search_files in the current turn before answering. Use read_file before every claim about actual file content, and only summarize the content field returned by read_file in the current turn. Use list_scan_roots (it takes no arguments) whenever the user asks which folders, drives, or locations you are currently allowed to scan/search/read - never guess or recall this from memory or from an earlier turn, the allowed list can change at runtime. Never invent a tool result. When the user asks for file types, pass them through search_files.extensions, not as filename queries. scan_directory/search_files expose presentation-ready Thai metadata fields only (ชื่อ, ตำแหน่ง, ประเภท, ขนาด, แก้ไขล่าสุด). Copy ขนาด and แก้ไขล่าสุด exactly as provided: do not translate units, convert timezones, add UTC, or reformat them. Never infer content from filename, extension, path, size, or timestamps.';

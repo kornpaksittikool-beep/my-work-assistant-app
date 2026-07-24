@@ -42,6 +42,10 @@ export class McpClientService {
     return this.callTool('search_files', { ...args });
   }
 
+  listScanRoots(): Promise<unknown> {
+    return this.callTool('list_scan_roots', {});
+  }
+
   private async callTool(
     name: string,
     args: Record<string, unknown>,
